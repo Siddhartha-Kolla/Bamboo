@@ -1,0 +1,53 @@
+[
+  {"text": "open chrome", "expect": ["chrome"]},
+  {"text": "launch google chrome", "expect": ["chrome"]},
+  {"text": "I want to browse the internet", "expect": ["chrome"]},
+  {"text": "open the browser please", "expect": ["chrome"]},
+  {"text": "can you start chrome for me", "expect": ["chrome"]},
+  {"text": "take me to the web", "expect": ["chrome"]},
+
+  {"text": "open spotify", "expect": ["spotify"]},
+  {"text": "play some music", "expect": ["spotify"]},
+  {"text": "fire up my music", "expect": ["spotify"]},
+  {"text": "launch spotify please", "expect": ["spotify"]},
+  {"text": "I want to listen to my playlist", "expect": ["spotify"]},
+  {"text": "start the music app", "expect": ["spotify"]},
+
+  {"text": "open notepad", "expect": ["notepad"]},
+  {"text": "launch notepad", "expect": ["notepad"]},
+  {"text": "start notepad please", "expect": ["notepad"]},
+  {"text": "I need to write a quick note", "expect": ["notepad"]},
+  {"text": "open a text editor", "expect": ["notepad"]},
+  {"text": "can you open notepad for me", "expect": ["notepad"]},
+  {"text": "I want to jot something down", "expect": ["notepad"]},
+
+  {"text": "open vscode", "expect": ["vscode"]},
+  {"text": "launch visual studio code", "expect": ["vscode"]},
+  {"text": "I want to write some code", "expect": ["vscode"]},
+  {"text": "open the code editor", "expect": ["vscode"]},
+  {"text": "start my IDE", "expect": ["vscode"]},
+  {"text": "let's do some programming", "expect": ["vscode"]},
+
+  {"text": "open calculator", "expect": ["calc"]},
+  {"text": "launch calc", "expect": ["calc"]},
+  {"text": "I need to do some math", "expect": ["calc"]},
+  {"text": "start the calculator app", "expect": ["calc"]},
+  {"text": "can you open a calculator", "expect": ["calc"]},
+
+  {"text": "what's the weather today", "expect": []},
+  {"text": "tell me a joke", "expect": []},
+  {"text": "what time is it", "expect": []},
+  {"text": "how do I install python", "expect": []},
+  {"text": "I love listening to music", "expect": []},
+  {"text": "chrome is slower than firefox", "expect": []},
+  {"text": "notepad was my first editor", "expect": []},
+  {"text": "what is 2 plus 2", "expect": []},
+  {"text": "hello there", "expect": []},
+  {"text": "open the door", "expect": []},
+  {"text": "open photoshop", "expect": []},
+  {"text": "launch the missiles", "expect": []},
+
+  {"text": "open chrome and notepad", "expect": ["chrome", "notepad"], "multi": true},
+  {"text": "start spotify and vscode", "expect": ["spotify", "vscode"], "multi": true},
+  {"text": "open the calculator and the browser", "expect": ["calc", "chrome"], "multi": true}
+]

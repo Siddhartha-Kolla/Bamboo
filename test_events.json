@@ -1,0 +1,306 @@
+{
+  "now": "2026-10-07T09:00",
+  "note": "now is a Wednesday. start/end are ISO datetimes, or plain dates for all-day events (end = last day, inclusive). minutes only checked when given.",
+  "cases": [
+    {
+      "text": "dentist friday 3pm",
+      "title": "Dentist",
+      "start": "2026-10-09T15:00"
+    },
+    {
+      "text": "lunch with Sam tomorrow at 12:30",
+      "title": "Lunch with Sam",
+      "start": "2026-10-08T12:30"
+    },
+    {
+      "text": "dentist with Dr Weber friday 3pm",
+      "title": "Dentist with Dr Weber",
+      "start": "2026-10-09T15:00"
+    },
+    {
+      "text": "call mom tomorrow 6pm",
+      "title": "Call mom",
+      "start": "2026-10-08T18:00"
+    },
+    {
+      "text": "call mom",
+      "title": "Call mom",
+      "start": "2026-10-07",
+      "all_day": true
+    },
+    {
+      "text": "pay rent today",
+      "title": "Pay rent",
+      "start": "2026-10-07",
+      "all_day": true
+    },
+    {
+      "text": "pay rent",
+      "title": "Pay rent",
+      "start": "2026-10-07",
+      "all_day": true
+    },
+    {
+      "text": "standup 9am monday",
+      "title": "Standup",
+      "start": "2026-10-12T09:00"
+    },
+    {
+      "text": "team meeting next friday at 2pm",
+      "title": "Team meeting",
+      "start": "2026-10-16T14:00"
+    },
+    {
+      "text": "dinner on 12 march at 7pm",
+      "title": "Dinner",
+      "start": "2027-03-12T19:00"
+    },
+    {
+      "text": "conference from 9 to 11 on friday",
+      "title": "Conference",
+      "start": "2026-10-09T09:00",
+      "minutes": 120
+    },
+    {
+      "text": "workshop 3-4pm tomorrow",
+      "title": "Workshop",
+      "start": "2026-10-08T15:00",
+      "minutes": 60
+    },
+    {
+      "text": "interview tomorrow 10am for 90 minutes",
+      "title": "Interview",
+      "start": "2026-10-08T10:00",
+      "minutes": 90
+    },
+    {
+      "text": "gym tomorrow morning",
+      "title": "Gym",
+      "start": "2026-10-08T09:00"
+    },
+    {
+      "text": "call Anna in 2 hours",
+      "title": "Call Anna",
+      "start": "2026-10-07T11:00"
+    },
+    {
+      "text": "tea in 30 minutes",
+      "title": "Tea",
+      "start": "2026-10-07T09:30"
+    },
+    {
+      "text": "dentist at 5",
+      "title": "Dentist",
+      "start": "2026-10-07T17:00"
+    },
+    {
+      "text": "meeting at 8am",
+      "title": "Meeting",
+      "start": "2026-10-08T08:00"
+    },
+    {
+      "text": "meeting at 3pm",
+      "title": "Meeting",
+      "start": "2026-10-07T15:00"
+    },
+    {
+      "text": "birthday party saturday",
+      "title": "Birthday party",
+      "start": "2026-10-10",
+      "all_day": true
+    },
+    {
+      "text": "remind me to buy milk tomorrow",
+      "title": "Buy milk",
+      "start": "2026-10-08",
+      "all_day": true
+    },
+    {
+      "text": "schedule a call with Lena on thursday at 4pm",
+      "title": "A call with Lena",
+      "start": "2026-10-08T16:00"
+    },
+    {
+      "text": "add yoga every monday 7am",
+      "title": "Yoga",
+      "start": "2026-10-12T07:00",
+      "rrule": "FREQ=WEEKLY;BYDAY=MO"
+    },
+    {
+      "text": "standup every weekday 9:30",
+      "title": "Standup",
+      "start": "2026-10-07T09:30",
+      "rrule": "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
+    },
+    {
+      "text": "pay rent monthly on 1st",
+      "title": "Pay rent",
+      "start": "2026-11-01",
+      "all_day": true,
+      "rrule": "FREQ=MONTHLY"
+    },
+    {
+      "text": "review room 5 friday 11am",
+      "title": "Review room 5",
+      "start": "2026-10-09T11:00"
+    },
+    {
+      "text": "dentist friday at 3pm, bring the forms",
+      "title": "Dentist, bring the forms",
+      "start": "2026-10-09T15:00"
+    },
+    {
+      "text": "Sam's birthday 24 october",
+      "title": "Sam's birthday",
+      "start": "2026-10-24",
+      "all_day": true
+    },
+    {
+      "text": "flight to Berlin saturday 6:45am",
+      "title": "Flight to Berlin",
+      "start": "2026-10-10T06:45"
+    },
+    {
+      "text": "lunch at noon tomorrow",
+      "title": "Lunch",
+      "start": "2026-10-08T12:00"
+    },
+    {
+      "text": "movie tonight",
+      "title": "Movie",
+      "start": "2026-10-07T18:00"
+    },
+    {
+      "text": "moms birthday dinner sunday 7pm",
+      "title": "Moms birthday dinner",
+      "start": "2026-10-11T19:00"
+    },
+    {
+      "text": "monday meeting with the design team at 10",
+      "title": "Meeting with the design team",
+      "start": "2026-10-12T10:00"
+    },
+    {
+      "text": "workshop next week",
+      "title": "Workshop",
+      "start": "2026-10-12",
+      "end": "2026-10-18",
+      "all_day": true
+    },
+    {
+      "text": "trip next month",
+      "title": "Trip",
+      "start": "2026-11-01",
+      "end": "2026-11-30",
+      "all_day": true
+    },
+    {
+      "text": "workshop from 9:30 180 minutes tomorrow",
+      "title": "Workshop",
+      "start": "2026-10-08T09:30",
+      "end": "2026-10-08T12:30"
+    },
+    {
+      "text": "workshop 9:30 for 180 minutes tomorrow",
+      "title": "Workshop",
+      "start": "2026-10-08T09:30",
+      "end": "2026-10-08T12:30"
+    },
+    {
+      "text": "exam tomorrow 2pm 2 hours",
+      "title": "Exam",
+      "start": "2026-10-08T14:00",
+      "end": "2026-10-08T16:00"
+    },
+    {
+      "text": "holiday today until 31st october",
+      "title": "Holiday",
+      "start": "2026-10-07",
+      "end": "2026-10-31",
+      "all_day": true
+    },
+    {
+      "text": "holiday 20 oct to 25 oct",
+      "title": "Holiday",
+      "start": "2026-10-20",
+      "end": "2026-10-25",
+      "all_day": true
+    },
+    {
+      "text": "vacation 24 dec until 2 jan",
+      "title": "Vacation",
+      "start": "2026-12-24",
+      "end": "2027-01-02",
+      "all_day": true
+    },
+    {
+      "text": "visit tomorrow until sunday",
+      "title": "Visit",
+      "start": "2026-10-08",
+      "end": "2026-10-11",
+      "all_day": true
+    },
+    {
+      "text": "conference tomorrow morning 9 until 31 october 12 pm",
+      "title": "Conference",
+      "start": "2026-10-08T09:00",
+      "end": "2026-10-31T12:00"
+    },
+    {
+      "text": "retreat 12 october 10am to 14 october 4pm",
+      "title": "Retreat",
+      "start": "2026-10-12T10:00",
+      "end": "2026-10-14T16:00"
+    },
+    {
+      "text": "meeting friday 9 until 11",
+      "title": "Meeting",
+      "start": "2026-10-09T09:00",
+      "end": "2026-10-09T11:00"
+    },
+    {
+      "text": "meeting friday 9:30 - 11:00",
+      "title": "Meeting",
+      "start": "2026-10-09T09:30",
+      "end": "2026-10-09T11:00"
+    },
+    {
+      "text": "meeting from 3 to 5",
+      "title": "Meeting",
+      "start": "2026-10-07T15:00",
+      "end": "2026-10-07T17:00"
+    },
+    {
+      "text": "sprint review friday next week",
+      "title": "Sprint review",
+      "start": "2026-10-16",
+      "end": "2026-10-16",
+      "all_day": true
+    },
+    {
+      "text": "meeting friday next week 3pm",
+      "title": "Meeting",
+      "start": "2026-10-16T15:00",
+      "end": "2026-10-16T16:00"
+    },
+    {
+      "text": "party this weekend",
+      "title": "Party",
+      "start": "2026-10-10",
+      "end": "2026-10-11",
+      "all_day": true
+    },
+    {
+      "text": "night shift tomorrow 10pm to 6am",
+      "title": "Night shift",
+      "start": "2026-10-08T22:00",
+      "end": "2026-10-09T06:00"
+    },
+    {
+      "text": "evening class friday 6pm",
+      "title": "Evening class",
+      "start": "2026-10-09T18:00",
+      "end": "2026-10-09T19:00"
+    }
+  ]
+}

@@ -45,10 +45,8 @@ Without a time, an event is all-day. Without a length, it lasts one hour (change
 
 ## Install
 
-Replace `<repository-url>` with this repository's address.
-
 ```powershell
-git clone <repository-url> bamboo
+git clone https://github.com/Siddhartha-Kolla/Bamboo.git bamboo
 cd bamboo
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
@@ -150,11 +148,34 @@ People will see a "Google hasn't verified this app" page once. They continue thr
 
 The same steps appear in the app under Accounts, Advanced options, Setup guide. These steps follow Google's documented flow but have not been run end to end against a real Google project in this repository.
 
+## Resource use
+
+These numbers were measured on one machine (Windows 11, Python 3.11.9) and will differ on yours. "Working set" is what Task Manager shows. "Private" is the part not shared with other programs.
+
+| What | Measured |
+|---|---|
+| Memory, running in the tray, popup hidden | about 45 MB working set and 25 MB private right after a start, about 53 MB and 40 MB on a copy that had been in use |
+| Launcher process (there are two processes) | about 5 MB working set, 1 MB private |
+| CPU while idle | about 0.1% of one core (0.016 s of CPU time in 15 s) |
+| Disk, project files | about 0.7 MB |
+| Disk, the `.venv` | about 110 MB |
+| Disk, your data | a few hundred bytes in `~/.bamboo.json` and `~/.bamboo.vault` |
+
+Most parts load only when first needed, so memory grows a little with use. On a popup without the tray icon, the measured steps were:
+
+| Step | Working set | Private |
+|---|---|---|
+| Popup built and hidden | about 36 MB | about 20 MB |
+| After the first typed event (the date parser loads) | about 42 MB | about 25 MB |
+| After loading the Apple libraries | about 47 MB | about 29 MB |
+| After loading the Google module | about 61 MB | about 43 MB |
+
+Idle CPU is low because Bamboo waits for the hotkey and checks its internal queue every 150 ms. The first sentence you type after a start takes noticeably longer while the parser loads (0.2 to 0.5 s in the test runs). After that, parsing takes a few milliseconds. The settings window is built when you open it and destroyed when you close it. Its memory use was not measured.
+
 ## Limitations
 
 - Windows only, and English phrases only.
 - One tested environment: Windows 11, Python 3.11.9. Windows 10 and other Python versions are untested.
-- Idle memory use was about 45 MB (about 25 MB private) on that machine.
 - The startup shortcut points into this folder's `.venv`. If you move the folder, run `.\bamboo autostart on` again.
 - If another program already uses your hotkey, Bamboo cannot register it. Choose a different one in settings.
 
@@ -194,4 +215,4 @@ Bamboo was called Quick add. On first start it copies the old settings and vault
 
 ## License
 
-No license has been chosen yet.
+Bamboo is released under the MIT License. See [LICENSE](LICENSE).

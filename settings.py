@@ -1,4 +1,4 @@
-"""Settings in ~/.quickadd.json. Plain text and never holds a secret (those live in vault.py).
+"""Settings in ~/.bamboo.json. Plain text and never holds a secret (those live in vault.py).
 
 The file keeps the keys older versions wrote (`apple_id`, `calendar`) at the top level, so nothing needs
 migrating:
@@ -6,16 +6,18 @@ migrating:
     {"apple_id": "...", "calendar": "...",                     # Apple Calendar
      "google": {"mode": "link"}  or  {"mode": "api", "client_id": "...", "calendar_id": "...", "calendar_name": "..."},
      "default_target": "apple" | "google" | null,
-     "defaults": {"duration_min": 60, "unlock_idle_min": 30, "timezone": "auto", "hotkey": "ctrl+alt+C"}}
+     "defaults": {"duration_min": 60, "unlock_idle_min": 30, "timezone": "auto", "hotkey": "ctrl+alt+C", "playful": true}}
 """
 import json
 import os
 import re
 from pathlib import Path
 
-CONFIG = Path.home() / ".quickadd.json"
+import paths
 
-DEFAULTS = {"duration_min": 60, "unlock_idle_min": 30, "timezone": "auto", "hotkey": "ctrl+alt+C"}
+CONFIG = paths.CONFIG
+
+DEFAULTS = {"duration_min": 60, "unlock_idle_min": 30, "timezone": "auto", "hotkey": "ctrl+alt+C", "playful": True}
 TARGETS = ("apple", "google")
 LABELS = {"apple": "Apple Calendar", "google": "Google Calendar"}
 
@@ -58,6 +60,8 @@ def load(path=None):
         d["hotkey"] = DEFAULTS["hotkey"]
     if not isinstance(d["timezone"], str) or not d["timezone"]:
         d["timezone"] = "auto"
+    if not isinstance(d["playful"], bool):
+        d["playful"] = DEFAULTS["playful"]
     cfg["defaults"] = d
     cfg["google"] = dict(raw["google"]) if isinstance(raw.get("google"), dict) else {}
     if cfg.get("default_target") not in TARGETS:

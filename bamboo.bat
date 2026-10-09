@@ -1,2 +1,2 @@
 @echo off
-"%~dp0.venv\Scripts\python.exe" "%~dp0quickadd_ctl.py" %*
+"%~dp0.venv\Scripts\python.exe" "%~dp0bamboo_ctl.py" %*

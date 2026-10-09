@@ -1,7 +1,7 @@
 """One passphrase-encrypted file for every secret the tool keeps (Apple password, Google tokens).
 
 scrypt turns your passphrase into a key; Fernet (AES plus an integrity check) encrypts a JSON object of
-named secrets into ~/.quickadd.vault. One passphrase unlocks all of them.
+named secrets into ~/.bamboo.vault. One passphrase unlocks all of them.
 
 After a successful unlock the derived KEY (never the passphrase) stays in memory so secrets can be read
 and re-saved without asking again, and is dropped UNLOCK_IDLE_SECONDS after the last use. The key opens
@@ -9,7 +9,7 @@ only this vault. Python cannot reliably wipe strings, so "dropped" means the ref
 
 File format: {"v": 2, "kdf": "scrypt", n, r, p, "salt": b64, "token": fernet}. Version 1 held a single
 string (the Apple password); it is read as {"apple_password": ...} and upgraded on the first unlock,
-after a one-time copy to .quickadd.vault.bak.
+after a one-time copy to .bamboo.vault.bak.
 """
 import base64
 import hashlib
@@ -19,7 +19,9 @@ import shutil
 import time
 from pathlib import Path
 
-VAULT = Path.home() / ".quickadd.vault"
+import paths
+
+VAULT = paths.VAULT
 UNLOCK_IDLE_SECONDS = 30 * 60
 MIN_PASSPHRASE = 8
 SCRYPT = {"n": 2 ** 15, "r": 8, "p": 1}      # ~32 MB and ~0.1 s per guess for anyone trying to crack the file

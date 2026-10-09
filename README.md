@@ -1,174 +1,197 @@
-<div align="center">
+# Bamboo
 
-# 📅 Quick add
+<p align="center">
+  <img src="assets/banner.png" alt="Bamboo: Type it. Calendar it. A panda holding a calendar." width="720">
+</p>
 
-**Type it. Press Enter. It's in your calendar.**
+Bamboo is a Windows tray app that adds calendar events from a sentence you type. Press a hotkey, type `dentist friday 3pm`, check the preview, press Enter. The event goes to Apple Calendar or Google Calendar without you opening either one.
 
-A tiny Windows popup that turns plain sentences into calendar events and sends them to
-Apple Calendar or Google Calendar. No forms, no clicking through a month view.
+<p align="center">
+  <img src="assets/screenshots/popup.png" alt="The Bamboo popup after typing 'dentist friday 3pm': the title Dentist, Friday, 15:00 to 16:00, one hour, with Apple Calendar as the target." width="680">
+</p>
 
-`dentist friday 3pm` &nbsp;→&nbsp; ✅ *Dentist, Fri 16 Oct, 15:00–16:00*
+Status: it works on the author's machine (Windows 11, Python 3.11). It has not been tested on other setups, and there is no packaged installer.
 
-<sub>Windows 10/11 · Python 3.11 · runs in the tray · about 25&nbsp;MB of memory while idle</sub>
+## What it does
 
-</div>
+- Reads plain English: dates, times, ranges, lengths, repeats, and whole weeks or months.
+- Shows what it understood before anything is saved, including any guess it made.
+- Adds events to Apple Calendar (CalDAV) and Google Calendar.
+- Opens from a global hotkey (`Ctrl+Alt+C` by default) and sits in the tray when idle.
+- Keeps your Apple password and Google sign-in encrypted with a passphrase you choose.
 
----
+### Examples
 
-## ✨ What it does
-
-- **Global hotkey** (default `Ctrl + Alt + C`) opens a small popup from anywhere.
-- **Understands natural phrases**, shows you the result *before* anything is saved, then adds it.
-- **Apple Calendar and Google Calendar**, one default plus a one-off override per event.
-- **Private by design**: no server, no account with us. Passwords and tokens are encrypted on your PC.
-- **Always visible in the tray**, with start/stop/restart and "start with Windows".
-
-## 💬 Things you can type
-
-| You type | You get |
+| You type | Bamboo understands |
 |---|---|
-| `dentist friday 3pm` | Fri 15:00 – 16:00 |
-| `lunch with Sam tomorrow at 12:30` | Tomorrow 12:30 – 13:30 |
-| `workshop from 9:30 180 minutes tomorrow` | Tomorrow 09:30 – 12:30 |
-| `meeting friday 9 until 11` | Fri 09:00 – 11:00 |
-| `holiday today until 31st october` | All-day, today → 31 Oct |
-| `conference tomorrow morning 9 until 31 october 12pm` | Starts tomorrow 09:00, ends 31 Oct 12:00 |
-| `workshop next week` · `trip next month` · `party this weekend` | All-day periods |
-| `yoga every monday 7am` · `standup every weekday 9:30` | Repeating events |
-| `night shift tomorrow 10pm to 6am` | Ends the next morning |
-| `review tomorrow 5pm /google` | Sent to Google, just this once |
+| `dentist friday 3pm` | the next Friday, 15:00 to 16:00 |
+| `lunch with Sam tomorrow at 12:30` | tomorrow, 12:30 to 13:30 |
+| `workshop from 9:30 180 minutes tomorrow` | tomorrow, 09:30 to 12:30 |
+| `meeting friday 9 until 11` | Friday, 09:00 to 11:00 |
+| `holiday today until 31st october` | an all-day event from today to 31 October |
+| `conference tomorrow morning 9 until 31 october 12 pm` | starts tomorrow at 09:00, ends 31 October at 12:00 |
+| `yoga every monday 7am` | repeats every Monday at 07:00 |
+| `workshop next week` | an all-day event, Monday to Sunday of next week |
+| `review tomorrow 5pm /google` | goes to Google Calendar, for this event only |
 
-> **Good to know.** If you type no time, the event is all-day. If you type no length, it lasts the default
-> (one hour). Small guesses such as "5 → 5 pm" are shown under the card so nothing happens silently.
+Without a time, an event is all-day. Without a length, it lasts one hour (changeable in settings). A bare "5" is read as 5 pm, and the card tells you when it makes a guess like that.
 
-## 🚀 Quick start
+## Requirements
+
+- Windows. It uses Windows-only calls (global hotkey, tray, startup shortcuts), so it will not run on macOS or Linux.
+- Python 3.11 with tkinter. The installer from python.org includes tkinter. Other Python versions are untested.
+- Internet access when you add an event to Apple or Google. Parsing happens locally.
+- For Apple Calendar: an app-specific password (see below).
+
+## Install
+
+Replace `<repository-url>` with this repository's address.
 
 ```powershell
-git clone <this repo> quickadd
-cd quickadd
+git clone <repository-url> bamboo
+cd bamboo
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
-qa start
+.\bamboo start
 ```
 
-Then press **Ctrl + Alt + C**, or use the calendar icon in the tray. Start it with Windows from the tray menu or with `qa autostart on`.
+`.\bamboo` runs `bamboo.bat` in the project folder. It works in PowerShell and in `cmd.exe`, but only from that folder.
+
+Bamboo runs as `pythonw.exe bamboo.py` from the `.venv` in this folder. It is not compiled, so after changing code you only need `.\bamboo restart`.
+
+## Use it
+
+Press `Ctrl+Alt+C` or choose "Add an event" from the tray icon. Type a sentence and read the card. Enter saves, Esc closes.
 
 | Command | What it does |
 |---|---|
-| `qa start` / `qa stop` | Start or stop the popup |
-| `qa restart` | Stop and start again, which loads code changes |
-| `qa status` | Running? Starts with Windows? |
-| `qa autostart on` / `off` | Start when you log in |
-| `qa log` | Show the end of the log (`~/.quickadd.log`) |
+| `.\bamboo start` | Start Bamboo in the background |
+| `.\bamboo stop` | Ask the running copy to quit |
+| `.\bamboo restart` | Stop and start again, which loads changed code |
+| `.\bamboo status` | Show whether it is running and whether it starts with Windows |
+| `.\bamboo autostart on` | Start it when you log in (`off` removes the shortcut) |
+| `.\bamboo log` | Print the end of the log file |
 
-## 🔗 Connect a calendar
+Only one copy runs at a time. The tray menu also has Settings, Restart, a "Start with Windows" switch, and Quit.
 
-Open **Settings** with `/settings` in the popup, or from the tray. The first time you save a password or
-sign in, you choose a **passphrase**. It encrypts everything you store, and you type it again after
-30 minutes without use (you can change that).
+### Slash commands
 
-### 🍎 Apple Calendar
-1. Go to **appleid.apple.com → Sign-In and Security → App-Specific Passwords** and create one.
-   *It's a separate password for apps, not your normal Apple password. You can revoke it any time.*
-2. In Settings → **Accounts → Apple Calendar**, enter your Apple ID and that password, press **Connect**,
-   choose a calendar and press **Save**.
+Typing `/` instead of an event opens a command. `Tab` completes the name.
 
-### 🟢 Google Calendar
-Press **Sign in with Google**, choose your account, press **Allow**. That's it.
-
-> The first time, Google may show *"Google hasn't verified this app"*. Click **Advanced → Go to Quick add**.
-> This appears once per person until the app is verified by Google.
-
-**Maintainers** (the person who ships the app) must do a one-time setup so that button works.
-See [Ship Google sign-in](#-ship-google-sign-in-maintainers-only) below.
-
-## ⌨️ Slash commands
-
-Type `/` in the popup. `Tab` completes, `Enter` runs.
-
-| Command | Does |
+| Command | What it does |
 |---|---|
 | `/settings` | Open the settings window |
-| `/status` | Default calendar, vault state, timezone, hotkey |
-| `/google` · `/apple` | Make that calendar the default |
-| `/target` | Show or set the default |
+| `/status` | Show the default calendar, vault state, timezone, and hotkey |
+| `/apple`, `/google` | Make that calendar the default |
+| `/target` | Show or set the default calendar |
 | `/lock` | Forget the passphrase now |
-| `/log` · `/restart` · `/quit` | Open the log, restart, stop |
-| `… /google` or `… /apple` after an event | Send just that event there |
+| `/log`, `/restart`, `/quit` | Open the log, restart, stop |
+| `... /google` or `... /apple` at the end of an event | Send just that event there |
 
-## 🔒 Privacy and security
+## Connect a calendar
 
-| What | Where | Protection |
+Open settings with `/settings` or from the tray. The first time you store a password or sign in, Bamboo asks you to choose a passphrase. There is no way to recover it. After 30 minutes without use (configurable) Bamboo forgets it and asks again.
+
+### Apple Calendar
+
+1. Sign in at appleid.apple.com, open Sign-In and Security, then App-Specific Passwords, and create one. It is separate from your Apple ID password and you can revoke it there.
+2. In settings, open Accounts, enter your Apple ID and that password, and press Connect.
+3. Choose a calendar and press Save.
+
+### Google Calendar
+
+There are three routes, depending on how this copy of Bamboo is set up.
+
+- Sign in with Google. This adds events automatically and needs a Google client (see "Set up Google sign-in" below). This repository does not include one, so it only works if the person who distributes Bamboo adds one.
+- Open events in the browser. Under Accounts, Advanced options, "Open events in my browser" needs no sign-in. Each event opens a prefilled Google Calendar page and you press Save there. That is one extra click per event, and you pick the calendar in Google's form.
+- Your own Google project. Create a client yourself, paste its ID and secret under Advanced options, then sign in. The in-app Setup guide lists the steps.
+
+## Configuration
+
+Everything below is in the settings window. The values live in `~/.bamboo.json`.
+
+| Setting | Default | Notes |
 |---|---|---|
-| Apple app-specific password | `~/.quickadd.vault` | Encrypted with your passphrase (scrypt + AES) |
-| Google sign-in token | `~/.quickadd.vault` | Encrypted with your passphrase |
-| Apple ID, calendar names, preferences | `~/.quickadd.json` | Plain text, **never** a secret |
-| Events | Your calendar provider | Their account security |
-| Fallback `.ics` files | `Documents\quickadd` | Plain text (only if saving to a calendar failed) |
+| Default calendar | first one connected | A one-off `/apple` or `/google` overrides it |
+| Event length | 60 minutes | Used when you type no length |
+| Passphrase timeout | 30 minutes | How long Bamboo stays unlocked after the last use |
+| Timezone | automatic | Uses the PC's timezone, or an IANA name such as `Europe/Berlin` |
+| Hotkey | `ctrl+alt+C` | Needs Ctrl, Alt, or Win. Restart Bamboo after changing it |
+| Friendly messages | on | Short, warmer wording on cards. Turn off for plain text |
 
-- **No server of ours.** The app talks directly to Apple or Google from your PC, and only when you add an event.
-- **Nothing is logged** that contains a password or token.
-- The passphrase is never stored. After the idle time (default 30 minutes) the app forgets what it unlocked.
-- A malicious program already running as *you* could still read memory while the vault is unlocked.
-  Encryption protects stolen files and backups, not an already-compromised session.
+## Privacy and security
 
-## 🛠️ Ship Google sign-in (maintainers only)
+Bamboo has no server of its own. It talks to Apple or Google directly from your PC, and only when you add an event, load calendars, or sign in. The code makes no other network calls.
 
-Google needs to know *which app* is asking. You register that once, and every user shares it. Nothing
-runs on a server, and the client ID is not a key to anyone's calendar. Users still have to press Allow.
+| What | Where | Stored as |
+|---|---|---|
+| Apple app-specific password | `~/.bamboo.vault` | Encrypted with a key derived from your passphrase (scrypt, then Fernet) |
+| Google sign-in token | `~/.bamboo.vault` | Same vault |
+| Apple ID, calendar names, preferences | `~/.bamboo.json` | Plain JSON, no secrets |
+| Events that failed to save | `Documents\Bamboo` | Plain `.ics` files |
+| Log | `~/.bamboo.log` | Plain text. Bamboo itself does not write passwords or tokens to it |
 
-> ⏱️ About 10 minutes · free · done once. The same steps, with buttons, are in the app:
-> **Settings → Accounts → Google → Advanced options → Setup guide.**
+The passphrase is never written to disk. While the vault is unlocked its key is held in memory, so a program already running as your Windows user could read it. Encryption protects the files, not a compromised session.
 
-1. **Create a project** at [console.cloud.google.com](https://console.cloud.google.com/projectcreate). Name it like your app; users see this name.
-2. **Turn on the Calendar API**: [APIs & Services → Library → Google Calendar API → Enable](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com).
-3. **Set up the consent screen**: [OAuth consent screen](https://console.cloud.google.com/apis/credentials/consent). Choose *External*, add the app name, logo, your support e-mail and the permission `.../auth/calendar.events`.
-4. **Create the client**: [Credentials → Create credentials → OAuth client ID](https://console.cloud.google.com/apis/credentials) → application type **Desktop app**. Copy the client ID and secret.
-5. **Give it to the app**: copy `google_client.example.json` to `google_client.json` and paste both values.
-6. **Publish**: on the consent screen press **Publish app** (*In production*). Otherwise Google ends every sign-in after 7 days.
+Passwords go to Windows Credential Manager instead only if you run `python icloud.py setup --keyring`, which skips the passphrase.
 
-> **About the "unverified" page.** Until Google reviews the app (a website, a privacy policy, a short demo
-> video), users click through one extra warning page. It's cosmetic but looks scary, so mention it in your release notes.
-> You can delete or replace the client in the console at any time. Users then just sign in again.
+## Set up Google sign-in
 
-Prefer not to ship anything? Under **Advanced options** a user can use **their own** Google project,
-or choose **Open events in my browser**, which needs no sign-in but one extra *Save* click per event.
+Only the person who distributes Bamboo needs to do this, once. Google must know which application is asking, so this registers Bamboo with Google. The client ID and secret are not a key to anyone's calendar. Each person still approves access themselves.
 
-## 🧰 Troubleshooting
+1. Create a project in the Google Cloud Console and name it Bamboo. Users see this name when they sign in.
+2. In APIs & Services, Library, enable the Google Calendar API.
+3. Under OAuth consent screen, choose External, set the app name and a support e-mail, and add the permission `https://www.googleapis.com/auth/calendar.events`. `assets/png/tile-512.png` is a square logo you can upload.
+4. Under Credentials, create an OAuth client ID of type Desktop app.
+5. Copy `google_client.example.json` to `google_client.json` in the project folder and fill in the client ID and secret.
+6. On the consent screen, publish the app. While it stays in Testing status, Google ends sign-ins after 7 days.
 
-| Problem | Try |
+People will see a "Google hasn't verified this app" page once. They continue through Advanced. Removing that page needs Google's verification process, which this project has not been through.
+
+The same steps appear in the app under Accounts, Advanced options, Setup guide. These steps follow Google's documented flow but have not been run end to end against a real Google project in this repository.
+
+## Limitations
+
+- Windows only, and English phrases only.
+- One tested environment: Windows 11, Python 3.11.9. Windows 10 and other Python versions are untested.
+- Idle memory use was about 45 MB (about 25 MB private) on that machine.
+- The startup shortcut points into this folder's `.venv`. If you move the folder, run `.\bamboo autostart on` again.
+- If another program already uses your hotkey, Bamboo cannot register it. Choose a different one in settings.
+
+### Troubleshooting
+
+| Problem | What to try |
 |---|---|
-| Hotkey does nothing | Another program may use it. Change it in Settings → General, then `qa restart`. Check `qa log`. |
-| "Already running" | `qa status`, then `qa restart`. |
-| Events show at the wrong hour | Settings → Defaults → Time. Leave it on automatic, or enter a zone like `Europe/Berlin`. |
-| Forgot the passphrase | It can't be recovered (that's the point). Close quick-add, delete `%USERPROFILE%\.quickadd.vault`, then connect your calendars again. Your calendars themselves are not affected. |
-| Google says the sign-in expired | The app is still in *Testing* in Google Cloud. Publish it (step 6 above). |
-| Nothing happens on Enter | Open `/log`. Failed saves are written to `Documents\quickadd` as `.ics` files instead. |
+| The hotkey does nothing | Run `.\bamboo log`. A line saying the hotkey could not be registered means another program has it. Change it in settings and restart. |
+| Events appear at the wrong hour | Open settings, Defaults, and set the timezone. |
+| Google sign-in stopped working after a week | The Google app is still in Testing status. Publish it (step 6 above) and sign in again. |
+| You forgot the passphrase | It cannot be recovered. Close Bamboo, delete `%USERPROFILE%\.bamboo.vault`, and connect your calendars again. |
 
-## 🧪 For developers
+## Development
+
+Run the tests from the project folder. Each prints a pass count, and the UI suite briefly shows real windows, so do not type while it runs. All three use temporary files and never touch your real settings or vault.
 
 ```powershell
-.venv\Scripts\python eval_calendar.py   # phrase parsing   (52 cases)
-.venv\Scripts\python test_backend.py    # vault, settings, Google, commands
-.venv\Scripts\python test_ui.py         # the real windows (it shows them briefly; don't type)
+.venv\Scripts\python eval_calendar.py
+.venv\Scripts\python test_backend.py
+.venv\Scripts\python test_ui.py
 ```
 
-All tests use temporary files and stubs: they never touch your real settings, vault or calendars.
-
-| File | Role |
+| Path | Role |
 |---|---|
-| `quickadd.py` | The popup, hotkey, tray wiring |
-| `eventparser.py` | Sentence → title, start, end, repeat (uses `ctparse`) |
-| `eventout.py` | Event → `.ics` with timezones |
-| `calendars.py` · `icloud.py` · `google_cal.py` · `google_link.py` | Where events go |
-| `vault.py` · `settings.py` | Encrypted secrets · plain preferences |
-| `commands.py` · `settings_window.py` · `theme.py` | Slash commands · settings UI · colours |
-| `quickadd_ctl.py` · `singleton.py` · `tray.py` · `qa.bat` | Start/stop, single instance, tray |
+| `bamboo.py`, `bamboo_ctl.py`, `tray.py`, `singleton.py` | The popup and hotkey, the start/stop commands, the tray icon, the one-copy lock |
+| `eventparser.py`, `eventout.py` | Sentence to event (built on `ctparse`), event to `.ics` |
+| `calendars.py`, `icloud.py`, `google_cal.py`, `google_link.py` | Where events go |
+| `vault.py`, `settings.py`, `paths.py` | Encrypted secrets, preferences, file locations |
+| `commands.py`, `settings_window.py`, `voice.py`, `theme.py`, `branding.py` | Slash commands, settings UI, card wording, colors, images |
+| `assets/`, `tools/make_assets.py` | The panda artwork and the script that renders its icons |
 
-## ⚠️ Current limits
+The icons in `assets/png` and `assets/bamboo.ico` are generated from `assets/bamboo-logo.svg` and committed. To rebuild them, install `requirements-dev.txt` in a separate environment and run `python tools/make_assets.py`.
 
-Windows only · English phrases only · Apple needs an app-specific password · one extra click if you pick the Google browser option.
+### Coming from Quick add
 
-## 📄 License
+Bamboo was called Quick add. On first start it copies the old settings and vault to the new file names, leaves the old files in place, and replaces an old startup shortcut. `quickadd.py` and `qa.bat` are small forwarding files so old shortcuts keep working. You can delete them.
 
-*To be decided.*
+## License
+
+No license has been chosen yet.

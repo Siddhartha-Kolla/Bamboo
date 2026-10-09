@@ -1,9 +1,9 @@
-"""Control the quick-add popup:   qa start | stop | restart | status | autostart on|off|status | log
+"""Control the Bamboo popup:   bamboo start | stop | restart | status | autostart on|off|status | log
 
-    qa restart        stop the running popup (if any) and start a fresh one, which loads your code changes
-    qa autostart on   start the popup automatically when you log in to Windows
+    bamboo restart        stop the running popup (if any) and start a fresh one, which loads your code changes
+    bamboo autostart on   start the popup automatically when you log in to Windows
 
-`qa` is qa.bat in this folder. Everything here uses the project's own .venv.
+`bamboo` is bamboo.bat in this folder. Everything here uses the project's own .venv.
 """
 import os
 import subprocess
@@ -11,15 +11,16 @@ import sys
 import time
 from pathlib import Path
 
+import paths
 import singleton
 
 HERE = Path(__file__).resolve().parent
 PYTHONW = HERE / ".venv" / "Scripts" / "pythonw.exe"
-SCRIPT = HERE / "quickadd.py"
-LOG = Path.home() / ".quickadd.log"
-PIDFILE = Path.home() / ".quickadd.pid"
-STARTUP_LINK = (Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
-                / "Startup" / "Quickadd.lnk")
+SCRIPT = HERE / "bamboo.py"
+ICON = HERE / "assets" / "bamboo.ico"
+LOG = paths.LOG
+PIDFILE = paths.PIDFILE
+STARTUP_DIR = Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
 _DETACHED = 0x00000008 | 0x00000200 | 0x08000000      # DETACHED_PROCESS | NEW_PROCESS_GROUP | NO_WINDOW
 
 
@@ -49,7 +50,7 @@ def start():
 
 
 def _kill_leftover():
-    """Last resort: end the process in the PID file, but only if it really is quickadd.py."""
+    """Last resort: end the process in the PID file, but only if it really is bamboo.py (or its old name)."""
     try:
         pid = int(PIDFILE.read_text().strip())
     except (OSError, ValueError):
@@ -58,7 +59,7 @@ def _kill_leftover():
         ["powershell", "-NoProfile", "-Command",
          "(Get-CimInstance Win32_Process -Filter 'ProcessId=%d').CommandLine" % pid],
         capture_output=True, text=True)
-    if "quickadd.py" not in (check.stdout or ""):
+    if not any(script in (check.stdout or "") for script in ("bamboo.py", "quickadd.py")):
         return False
     subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
     return True
@@ -94,19 +95,40 @@ def status():
     print("Starts with Windows: %s" % ("yes" if autostart_enabled() else "no"))
 
 
+def startup_links():
+    """(current shortcut, shortcut made before the rename)."""
+    return STARTUP_DIR / "Bamboo.lnk", STARTUP_DIR / "Quickadd.lnk"
+
+
 def autostart_enabled():
-    return STARTUP_LINK.exists()
+    new, old = startup_links()
+    return new.exists() or old.exists()
+
+
+def _write_shortcut(path):
+    icon = "$s.IconLocation = '%s'; " % ICON if ICON.exists() else ""
+    ps = ("$s = (New-Object -ComObject WScript.Shell).CreateShortcut('%s'); "
+          "$s.TargetPath = '%s'; $s.Arguments = '\"%s\"'; $s.WorkingDirectory = '%s'; %s"
+          "$s.Description = 'Bamboo calendar'; $s.Save()") % (path, PYTHONW, SCRIPT, HERE, icon)
+    subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True)
 
 
 def set_autostart(on):
+    new, old = startup_links()
+    old.unlink(missing_ok=True)                        # never leave the old shortcut behind
     if not on:
-        STARTUP_LINK.unlink(missing_ok=True)
+        new.unlink(missing_ok=True)
         return
-    STARTUP_LINK.parent.mkdir(parents=True, exist_ok=True)
-    ps = ("$s = (New-Object -ComObject WScript.Shell).CreateShortcut('%s'); "
-          "$s.TargetPath = '%s'; $s.Arguments = '\"%s\"'; $s.WorkingDirectory = '%s'; "
-          "$s.Description = 'Quick add calendar'; $s.Save()") % (STARTUP_LINK, PYTHONW, SCRIPT, HERE)
-    subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True)
+    new.parent.mkdir(parents=True, exist_ok=True)
+    _write_shortcut(new)
+
+
+def upgrade_autostart():
+    """A shortcut made before the rename points at quickadd.py: replace it by the current one. True if replaced."""
+    if startup_links()[1].exists():
+        set_autostart(True)
+        return True
+    return False
 
 
 def main(argv):

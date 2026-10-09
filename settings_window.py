@@ -15,11 +15,13 @@ import tkinter as tk
 import webbrowser
 from tkinter import ttk
 
+import branding
 import calendars
 import settings
 import theme
 import vault
-from theme import ACCENT, BG, BORDER, CARD, DIM, ERR, FG, FIELD, OK, WARN
+import voice  # noqa: F401 - the switch below changes voice.enabled()
+from theme import ACCENT, ACCENT_FILL, BG, BORDER, CARD, DIM, ERR, FG, FIELD, OK, ON_FILL, WARN
 
 _open = {"win": None}
 
@@ -44,6 +46,7 @@ def ask_passphrase(parent, title, prompt, confirm=False):
     box.configure(bg=BG, padx=24, pady=20)
     box.transient(parent)
     box.resizable(False, False)
+    branding.set_window_icon(box)
     tk.Label(box, text=prompt, bg=BG, fg=FG, font=(theme.FONT, 11), justify="left", wraplength=360).pack(anchor="w")
     first = tk.Entry(box, show="•", bg=FIELD, fg=FG, insertbackground=ACCENT, relief="flat", font=(theme.FONT, 12), width=34)
     first.pack(fill="x", pady=(12, 0), ipady=5)
@@ -69,7 +72,7 @@ def ask_passphrase(parent, title, prompt, confirm=False):
 
     buttons = tk.Frame(box, bg=BG)
     buttons.pack(fill="x", pady=(10, 0))
-    tk.Button(buttons, text="OK", command=ok, bg=ACCENT, fg=BG, relief="flat", bd=0, padx=18, pady=4,
+    tk.Button(buttons, text="OK", command=ok, bg=ACCENT_FILL, fg=ON_FILL, activebackground=ACCENT, activeforeground=BG, relief="flat", bd=0, padx=18, pady=4,
               font=(theme.FONT, 10, "bold"), cursor="hand2").pack(side="right")
     tk.Button(buttons, text="Cancel", command=box.destroy, bg=CARD, fg=FG, relief="flat", bd=0, padx=14, pady=4,
               font=(theme.FONT, 10), cursor="hand2").pack(side="right", padx=(0, 8))
@@ -96,7 +99,7 @@ class SettingsWindow:
         self.apple_connected = False
 
         self.top = top = tk.Toplevel(self.root)
-        top.title("Quick add – Settings")
+        top.title("Bamboo – Settings")
         top.configure(bg=BG)
         height = min(self.px(self.BASE_HEIGHT), int(top.winfo_screenheight() * 0.9))      # never taller than the screen
         top.geometry("%dx%d" % (self.px(self.BASE_WIDTH), height))
@@ -105,8 +108,17 @@ class SettingsWindow:
         top.bind("<Escape>", lambda e: self.close())
         self._dark_title_bar()
         self._style()
+        branding.set_window_icon(top)
 
-        tk.Label(top, text="Settings", bg=BG, fg=FG, font=(theme.FONT, 18, "bold")).pack(anchor="w", padx=self.px(24), pady=(self.px(18), self.px(6)))
+        header = tk.Frame(top, bg=BG)
+        header.pack(fill="x", padx=self.px(24), pady=(self.px(16), self.px(6)))
+        self.mascot = branding.photo("tile", self.px(52), master=top)
+        if self.mascot is not None:
+            tk.Label(header, image=self.mascot, bg=BG).pack(side="left", padx=(0, self.px(14)))
+        titles = tk.Frame(header, bg=BG)
+        titles.pack(side="left")
+        tk.Label(titles, text="Bamboo", bg=BG, fg=FG, font=(theme.FONT, 18, "bold")).pack(anchor="w")
+        tk.Label(titles, text="Settings", bg=BG, fg=DIM, font=(theme.FONT, 11)).pack(anchor="w")
         self.tabs = ttk.Notebook(top, style="Q.TNotebook")
         self.tabs.pack(fill="both", expand=True, padx=self.px(16), pady=(0, self.px(16)))
         self._build_accounts()
@@ -161,8 +173,8 @@ class SettingsWindow:
                   selectbackground=[("readonly", FIELD)], selectforeground=[("readonly", FG)])
         self.top.option_add("*TCombobox*Listbox.background", FIELD)
         self.top.option_add("*TCombobox*Listbox.foreground", FG)
-        self.top.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
-        self.top.option_add("*TCombobox*Listbox.selectForeground", BG)
+        self.top.option_add("*TCombobox*Listbox.selectBackground", ACCENT_FILL)
+        self.top.option_add("*TCombobox*Listbox.selectForeground", ON_FILL)
 
     def run_async(self, work, done):
         """Run work() on a thread; done(result, error) is then called on the Tk thread."""
@@ -254,8 +266,8 @@ class SettingsWindow:
         return box
 
     def _button(self, parent, text, command, primary=False):
-        return tk.Button(parent, text=text, command=command, bg=ACCENT if primary else FIELD, fg=BG if primary else FG,
-                         activebackground=FG, activeforeground=BG, relief="flat", bd=0, padx=self.px(16), pady=self.px(6),
+        return tk.Button(parent, text=text, command=command, bg=ACCENT_FILL if primary else FIELD, fg=ON_FILL if primary else FG,
+                         activebackground=ACCENT, activeforeground=BG, relief="flat", bd=0, padx=self.px(16), pady=self.px(6),
                          font=(theme.FONT, 10, "bold" if primary else "normal"), cursor="hand2")
 
     def _row(self, parent, row, *buttons):
@@ -429,6 +441,7 @@ class SettingsWindow:
         self.guide_box = box
         box.title("Google setup guide")
         box.configure(bg=BG)
+        branding.set_window_icon(box)
         width = self.px(700)
         box.geometry("%dx%d" % (width, min(self.px(780), int(box.winfo_screenheight() * 0.9))))
         box.minsize(self.px(520), self.px(420))
@@ -440,12 +453,17 @@ class SettingsWindow:
         except Exception:  # noqa: BLE001 - cosmetic only
             pass
 
-        head = tk.Frame(box, bg=BG)
-        head.pack(fill="x", padx=self.px(28), pady=(self.px(22), self.px(8)))
+        top_row = tk.Frame(box, bg=BG)
+        top_row.pack(fill="x", padx=self.px(28), pady=(self.px(22), self.px(8)))
+        self.guide_mascot = branding.photo("tile", self.px(64), master=box)
+        if self.guide_mascot is not None:
+            tk.Label(top_row, image=self.guide_mascot, bg=BG).pack(side="left", padx=(0, self.px(16)), anchor="n")
+        head = tk.Frame(top_row, bg=BG)
+        head.pack(side="left", fill="x", expand=True)
         tk.Label(head, text="Set up Google sign-in", bg=BG, fg=FG, font=(theme.FONT, 20, "bold")).pack(anchor="w")
         tk.Label(head, text=google_cal.GUIDE_TIME, bg=BG, fg=ACCENT, font=(theme.FONT, 11)).pack(anchor="w", pady=(self.px(4), 0))
-        tk.Label(head, text="Only the person who ships the app does this, once. Everyone else just presses \u201cSign in with Google\u201d.",
-                 bg=BG, fg=DIM, font=(theme.FONT, 10), wraplength=width - self.px(90), justify="left").pack(anchor="w", pady=(self.px(6), 0))
+        tk.Label(head, text="Only the person who ships Bamboo does this, once. Everyone else just presses \u201cSign in with Google\u201d.",
+                 bg=BG, fg=DIM, font=(theme.FONT, 10), wraplength=width - self.px(170), justify="left").pack(anchor="w", pady=(self.px(6), 0))
 
         foot = tk.Frame(box, bg=BG)
         foot.pack(side="bottom", fill="x", padx=self.px(28), pady=self.px(14))
@@ -464,8 +482,8 @@ class SettingsWindow:
         for number, (title, detail, url) in enumerate(google_cal.GUIDE_STEPS, 1):
             card = tk.Frame(body, bg=CARD)
             card.pack(fill="x", pady=(0, self.px(10)))
-            tk.Frame(card, bg=ACCENT, width=self.px(4)).pack(side="left", fill="y")
-            badge = tk.Label(card, text=str(number), bg=ACCENT, fg=BG, font=(theme.FONT, 13, "bold"), width=2)
+            tk.Frame(card, bg=ACCENT_FILL, width=self.px(4)).pack(side="left", fill="y")
+            badge = tk.Label(card, text=str(number), bg=ACCENT_FILL, fg=ON_FILL, font=(theme.FONT, 13, "bold"), width=2)
             badge.pack(side="left", anchor="n", padx=(self.px(16), self.px(14)), pady=self.px(16), ipady=self.px(3))
             text = tk.Frame(card, bg=CARD)
             text.pack(side="left", fill="x", expand=True, pady=self.px(14), padx=(0, self.px(16)))
@@ -622,8 +640,8 @@ class SettingsWindow:
         if target:
             changes["default_target"] = target
         settings.update(changes)
-        import quickadd
-        quickadd.apply_settings()
+        import bamboo
+        bamboo.apply_settings()
         self.say(self.defaults_msg, "Saved. Applies to the next event.", "ok")
         self.reload()
 
@@ -638,13 +656,17 @@ class SettingsWindow:
         self.hotkey_msg = self._status(page, 3)
         self._heading(page, 4, "Startup")
         self.autostart_var = tk.BooleanVar()
-        tk.Checkbutton(page, text="Start quick-add when I log in to Windows", variable=self.autostart_var, command=self.toggle_autostart,
+        tk.Checkbutton(page, text="Start Bamboo when I log in to Windows", variable=self.autostart_var, command=self.toggle_autostart,
                        bg=CARD, fg=FG, selectcolor=FIELD, activebackground=CARD, activeforeground=FG, font=(theme.FONT, 10)).grid(
             row=5, column=0, columnspan=3, sticky="w")
+        self.playful_var = tk.BooleanVar()
+        tk.Checkbutton(page, text="Friendly messages from Bamboo", variable=self.playful_var, command=self.toggle_playful,
+                       bg=CARD, fg=FG, selectcolor=FIELD, activebackground=CARD, activeforeground=FG, font=(theme.FONT, 10)).grid(
+            row=14, column=0, columnspan=3, sticky="w", pady=(self.px(10), 0))
         self._heading(page, 6, "Maintenance")
         self.lock_btn = self._button(page, "Lock now", self.lock_now)
         self.log_btn = self._button(page, "Open log", self.open_log)
-        self.restart_btn = self._button(page, "Restart quick-add", self.restart_app)
+        self.restart_btn = self._button(page, "Restart Bamboo", self.restart_app)
         self._row(page, 7, self.lock_btn, self.log_btn, self.restart_btn)
         self.general_msg = self._status(page, 8)
 
@@ -654,24 +676,28 @@ class SettingsWindow:
             self.say(self.hotkey_msg, "Not a valid hotkey. Examples: ctrl+alt+C, ctrl+shift+7, alt+F9. It needs Ctrl, Alt or Win.", "error")
             return
         settings.update({"defaults": {"hotkey": text}})
-        self.say(self.hotkey_msg, "Saved. Press Restart quick-add for the new hotkey to take effect.", "ok")
+        self.say(self.hotkey_msg, "Saved. Press Restart Bamboo for the new hotkey to take effect.", "ok")
 
     def toggle_autostart(self):
-        from quickadd_ctl import set_autostart
+        from bamboo_ctl import set_autostart
         try:
             set_autostart(self.autostart_var.get())
             self.say(self.general_msg, "Will start with Windows." if self.autostart_var.get() else "Will not start with Windows.", "ok")
         except Exception as err:  # noqa: BLE001
             self.say(self.general_msg, "Could not change it: %s" % err, "error")
 
+    def toggle_playful(self):
+        settings.update({"defaults": {"playful": bool(self.playful_var.get())}})
+        self.say(self.general_msg, "Bamboo will talk to you." if self.playful_var.get() else "Bamboo will keep to plain wording.", "ok")
+
     def lock_now(self):
         vault.lock()
         self.say(self.general_msg, "Locked. The passphrase is needed for the next event.", "ok")
 
     def open_log(self):
-        import quickadd
+        import bamboo
         try:
-            os.startfile(quickadd.LOG)
+            os.startfile(bamboo.LOG)
         except OSError:
             self.say(self.general_msg, "There is no log yet.", "warn")
 
@@ -730,8 +756,9 @@ class SettingsWindow:
         self._tz_toggle()
         # General
         self.hotkey_var.set(d["hotkey"])
+        self.playful_var.set(bool(d.get("playful", True)))
         try:
-            from quickadd_ctl import autostart_enabled
+            from bamboo_ctl import autostart_enabled
             self.autostart_var.set(autostart_enabled())
         except Exception:  # noqa: BLE001
             pass

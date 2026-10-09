@@ -1,4 +1,4 @@
-"""System-tray icon for the quick-add popup: Quick add / Restart / Start with Windows / Quit.
+"""System-tray icon for the Bamboo popup: Add an event / Settings / Restart / Start with Windows / Quit.
 
 Runs pystray on its own thread. Menu clicks are never handled here; they are put on the popup's
 event queue as strings and the Tk thread acts on them, because Tk must only be touched from its own thread.
@@ -6,6 +6,10 @@ event queue as strings and the Tk thread acts on them, because Tk must only be t
 
 
 def _icon_image():
+    import branding
+    panda = branding.pil("icon", 64)               # the panda; the drawn calendar below is the fallback
+    if panda is not None:
+        return panda
     from PIL import Image, ImageDraw
     size = 64
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
@@ -32,7 +36,7 @@ def start(events, hotkey_label, autostart_enabled, autostart_toggle):
         return lambda icon, item: events.put(name)
 
     menu = pystray.Menu(
-        pystray.MenuItem("Quick add  (%s)" % hotkey_label, put("tray-add"), default=True),
+        pystray.MenuItem("Add an event  (%s)" % hotkey_label, put("tray-add"), default=True),
         pystray.MenuItem("Settings…", put("tray-settings")),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Restart  (load code changes)", put("tray-restart")),
@@ -41,6 +45,6 @@ def start(events, hotkey_label, autostart_enabled, autostart_toggle):
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Quit", put("tray-quit")),
     )
-    icon = pystray.Icon("quickadd", _icon_image(), "Quick add calendar", menu)
+    icon = pystray.Icon("bamboo", _icon_image(), "Bamboo", menu)
     icon.run_detached()
     return icon

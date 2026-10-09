@@ -2,9 +2,11 @@
 
     python test_backend.py [-v]
 
-Everything runs against temporary files; the real ~/.quickadd.* files are never touched.
+Everything runs against temporary files; the real ~/.bamboo.* and ~/.quickadd.* files are never touched.
 """
 import base64
+import queue as queue_mod
+import struct
 import contextlib
 import datetime as dt
 import hashlib
@@ -17,16 +19,20 @@ import traceback
 from pathlib import Path
 
 import calendars
+import commands
 import eventout
 import google_cal
 import settings
 import vault
+import voice
 
-# Safety net: from import time on, nothing in this process can reach the real ~/.quickadd.* files.
-_SAFE = Path(tempfile.mkdtemp(prefix="quickadd-test-"))
+# Safety net: from import time on, nothing in this process can reach the real ~/.bamboo.* or ~/.quickadd.* files.
+_SAFE = Path(tempfile.mkdtemp(prefix="bamboo-test-"))
 vault.VAULT, settings.CONFIG, eventout.OUT_DIR = _SAFE / "v.vault", _SAFE / "c.json", _SAFE / "out"
 google_cal.CLIENT_FILE = _SAFE / "google_client.json"
+voice.FORCE = "plain"        # tests compare exact wording; the voice has its own tests below
 
+ROOT_DIR = Path(__file__).resolve().parent
 TESTS = []
 
 
@@ -40,7 +46,7 @@ def isolated():
     """Point vault/settings/output at a temp folder and reset the in-memory unlock state."""
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
-        saved = (vault.VAULT, settings.CONFIG, eventout.OUT_DIR, vault.UNLOCK_IDLE_SECONDS, google_cal.CLIENT_FILE)
+        saved = (vault.VAULT, settings.CONFIG, eventout.OUT_DIR, vault.UNLOCK_IDLE_SECONDS, google_cal.CLIENT_FILE, voice.FORCE)
         vault.VAULT, settings.CONFIG, eventout.OUT_DIR = tmp / "v.vault", tmp / "c.json", tmp / "out"
         google_cal.CLIENT_FILE = tmp / "google_client.json"            # absent unless a test writes one
         vault.lock()
@@ -48,7 +54,7 @@ def isolated():
             yield tmp
         finally:
             vault.lock()
-            vault.VAULT, settings.CONFIG, eventout.OUT_DIR, vault.UNLOCK_IDLE_SECONDS, google_cal.CLIENT_FILE = saved
+            vault.VAULT, settings.CONFIG, eventout.OUT_DIR, vault.UNLOCK_IDLE_SECONDS, google_cal.CLIENT_FILE, voice.FORCE = saved
 
 
 def raises(exc, fn, *args):
@@ -798,6 +804,301 @@ def commands_lock_and_status():
         assert "Default: Google Calendar" in detail and "unlocked, locks in" in detail and "Apple Calendar, Google Calendar" in detail
         r = commands.run("/lock")
         assert r.kind == "ok" and vault.needs_unlock() and "Vault: locked" in commands.run("/status").detail
+
+
+# ------------------------------------------------------------------------------------------ migration
+
+import paths
+
+
+@contextlib.contextmanager
+def fake_home():
+    with tempfile.TemporaryDirectory() as tmp:
+        yield Path(tmp)
+
+
+@test
+def migration_copies_old_files_byte_for_byte_and_keeps_the_originals():
+    with fake_home() as h:
+        data = {".quickadd.json": b'{"apple_id": "a"}\r\n', ".quickadd.vault": os.urandom(300), ".quickadd.vault.bak": b"older"}
+        for name, blob in data.items():
+            (h / name).write_bytes(blob)
+        assert sorted(paths.migrate(h)) == [".bamboo.json", ".bamboo.vault", ".bamboo.vault.bak"]
+        for old, new in paths.migration_pairs(h):
+            assert new.read_bytes() == old.read_bytes() == data[old.name] and old.exists(), old.name
+        assert paths.migrate(h) == []                                              # a second run does nothing
+        assert not list(h.glob("*.tmp"))                                           # no temp files left behind
+
+
+@test
+def migration_never_overwrites_a_new_file_and_ignores_missing_ones():
+    with fake_home() as h:
+        (h / ".quickadd.json").write_bytes(b"old settings")
+        (h / ".bamboo.json").write_bytes(b"new settings")                           # the new file already exists: it wins
+        (h / ".quickadd.vault").write_bytes(b"old vault")                           # only this one is copied
+        assert paths.migrate(h) == [".bamboo.vault"]
+        assert (h / ".bamboo.json").read_bytes() == b"new settings" and (h / ".quickadd.json").read_bytes() == b"old settings"
+    with fake_home() as h:
+        assert paths.migrate(h) == [] and not list(h.iterdir())                    # nothing to migrate, nothing created
+    with fake_home() as h:
+        (h / ".quickadd.json").write_bytes(b"{ not json")                           # damaged settings are copied as they are
+        assert paths.migrate(h) == [".bamboo.json"] and (h / ".bamboo.json").read_bytes() == b"{ not json"
+
+
+@test
+def migrated_vault_and_settings_work_under_the_new_names():
+    with fake_home() as h, isolated():
+        old_vault, old_cfg = h / ".quickadd.vault", h / ".quickadd.json"
+        vault.create("pass-phrase-1", {"apple_password": "abcd-efgh"}, path=old_vault)
+        vault.lock()
+        old_cfg.write_text(json.dumps({"apple_id": "me@icloud.com", "calendar": "School"}))
+        paths.migrate(h)
+        new_vault, new_cfg = h / ".bamboo.vault", h / ".bamboo.json"
+        assert new_vault.read_bytes() == old_vault.read_bytes()                      # not re-encrypted
+        assert vault.unlock("pass-phrase-1", path=new_vault) and vault.get("apple_password") == "abcd-efgh"
+        cfg = settings.load(new_cfg)
+        assert settings.apple_configured(cfg) and cfg["apple_id"] == "me@icloud.com"
+
+
+@test
+def path_constants_use_the_new_names():
+    assert paths.CONFIG.name == ".bamboo.json" and paths.VAULT.name == ".bamboo.vault" and paths.OUT_DIR.name == "Bamboo"
+    assert paths.KEYRING_SERVICE == "quickadd-icloud"                               # kept so stored credentials are not orphaned
+
+
+
+# ------------------------------------------------------------------------------- rename: old instance, shortcuts
+
+import uuid
+
+import bamboo_ctl
+import singleton
+
+
+@contextlib.contextmanager
+def fake_singleton_names():
+    """Unique mutex/event names, so these tests can never see (or stop) the real running popup."""
+    tag = uuid.uuid4().hex[:8]
+    saved = (singleton.MUTEX_NAME, singleton.STOP_NAME, singleton.LEGACY_MUTEX_NAME, singleton.LEGACY_STOP_NAME, list(singleton._held))
+    singleton.MUTEX_NAME, singleton.STOP_NAME = "Local\\bamboo-test-%s-mutex" % tag, "Local\\bamboo-test-%s-stop" % tag
+    singleton.LEGACY_MUTEX_NAME, singleton.LEGACY_STOP_NAME = "Local\\old-test-%s-mutex" % tag, "Local\\old-test-%s-stop" % tag
+    singleton._held.clear()
+    try:
+        yield
+    finally:
+        for handle in singleton._held:
+            singleton._k32.CloseHandle(handle)
+        singleton._held[:] = saved[4]
+        singleton.MUTEX_NAME, singleton.STOP_NAME, singleton.LEGACY_MUTEX_NAME, singleton.LEGACY_STOP_NAME = saved[:4]
+
+
+@test
+def singleton_allows_one_popup_and_signals_it_to_stop():
+    with fake_singleton_names():
+        assert not singleton.is_running() and singleton.request_stop() is False
+        assert singleton.acquire() is True
+        assert singleton.is_running() and singleton.acquire() is False             # a second copy is refused
+        event = singleton.create_stop_event()
+        assert not singleton.stop_requested(event)
+        assert singleton.request_stop() is True and singleton.stop_requested(event)
+
+
+@test
+def singleton_sees_and_stops_a_popup_started_under_the_old_name():
+    with fake_singleton_names():
+        old_mutex = singleton._k32.CreateMutexW(None, False, singleton.LEGACY_MUTEX_NAME)     # what the old version holds
+        old_stop = singleton._k32.CreateEventW(None, True, False, singleton.LEGACY_STOP_NAME)
+        try:
+            assert singleton.is_running()                                                        # `bamboo status` sees it
+            assert singleton.acquire() is False                                                  # a new popup does not start beside it
+            assert singleton.stop_requested(old_stop) is False
+            assert singleton.request_stop() is True and singleton.stop_requested(old_stop)       # `bamboo restart` can stop it
+        finally:
+            singleton._k32.CloseHandle(old_mutex)
+            singleton._k32.CloseHandle(old_stop)
+        assert not singleton.is_running()
+
+
+@contextlib.contextmanager
+def fake_startup():
+    with tempfile.TemporaryDirectory() as tmp:
+        saved = (bamboo_ctl.STARTUP_DIR, bamboo_ctl._write_shortcut)
+        bamboo_ctl.STARTUP_DIR = Path(tmp)
+        bamboo_ctl._write_shortcut = lambda path: Path(path).write_text("shortcut")
+        try:
+            yield Path(tmp)
+        finally:
+            bamboo_ctl.STARTUP_DIR, bamboo_ctl._write_shortcut = saved
+
+
+@test
+def autostart_shortcut_uses_the_new_name_and_replaces_the_old_one():
+    with fake_startup() as d:
+        assert bamboo_ctl.autostart_enabled() is False and bamboo_ctl.upgrade_autostart() is False and not list(d.iterdir())
+        bamboo_ctl.set_autostart(True)
+        assert [f.name for f in d.iterdir()] == ["Bamboo.lnk"] and bamboo_ctl.autostart_enabled()
+        bamboo_ctl.set_autostart(False)
+        assert not list(d.iterdir()) and not bamboo_ctl.autostart_enabled()
+    with fake_startup() as d:
+        (d / "Quickadd.lnk").write_text("old shortcut")                                          # made before the rename
+        assert bamboo_ctl.autostart_enabled() is True                                            # still counted as on
+        assert bamboo_ctl.upgrade_autostart() is True
+        assert [f.name for f in d.iterdir()] == ["Bamboo.lnk"]                                   # replaced, old one gone
+        assert bamboo_ctl.upgrade_autostart() is False                                           # nothing left to upgrade
+    with fake_startup() as d:
+        (d / "Quickadd.lnk").write_text("old shortcut")
+        bamboo_ctl.set_autostart(False)
+        assert not list(d.iterdir())                                                             # turning it off removes both
+
+
+@test
+def control_script_and_shims_point_at_the_new_program():
+    assert bamboo_ctl.SCRIPT.name == "bamboo.py" and bamboo_ctl.SCRIPT.exists()
+    assert (ROOT_DIR / "bamboo.bat").read_text().count("bamboo_ctl.py") == 1
+    assert "bamboo" in (ROOT_DIR / "qa.bat").read_text() and "from bamboo import main" in (ROOT_DIR / "quickadd.py").read_text()
+    assert "bamboo.bat" in (ROOT_DIR / "run_bamboo.bat").read_text()
+
+
+
+# ------------------------------------------------------------------------------------ brand: voice, colours, artwork
+
+import branding
+import theme
+
+
+@contextlib.contextmanager
+def voice_mode(mode):
+    saved = (voice.FORCE, voice._pick)
+    voice.FORCE, voice._pick = mode, (lambda options: options[0])           # deterministic: always the first friendly line
+    try:
+        yield
+    finally:
+        voice.FORCE, voice._pick = saved
+
+
+@test
+def voice_every_situation_has_plain_and_friendly_wording():
+    sample = {"calendar": "Apple Calendar", "name": "zzz"}
+    for key, (plain, friendly) in voice.LINES.items():
+        assert plain and 1 <= len(friendly) <= 3 and len(set(friendly)) == len(friendly), key
+        for text in [plain] + friendly:
+            text.format(**sample)                                              # no stray placeholder
+            assert len(text.format(**sample)) <= 60, text                      # short enough for a card
+            assert all(ord(c) < 0x1F000 for c in text), "emoji in " + key       # Tk renders emoji badly
+        for placeholder in ("{calendar}", "{name}"):
+            if placeholder in plain:
+                assert all(placeholder in t for t in friendly), (key, placeholder)   # friendly never drops the useful part
+
+
+@test
+def voice_plain_is_the_original_wording_and_friendly_is_different():
+    with isolated():
+        with voice_mode("plain"):
+            assert voice.say("saved", calendar="Apple Calendar") == "Added to Apple Calendar"
+            assert voice.say("wrong_passphrase") == "Wrong passphrase" and voice.say("locked") == "Locked"
+            assert voice.say("unknown_command", name="zzz") == "No command /zzz" and voice.say("empty") == "Describe your event"
+        with voice_mode("friendly"):
+            assert voice.say("saved", calendar="Apple Calendar") == "Done! Tucked into Apple Calendar"
+            assert voice.say("wrong_passphrase") == "That passphrase didn't fit"
+            assert "zzz" in voice.say("unknown_command", name="zzz")
+
+
+@test
+def voice_follows_the_setting_and_defaults_to_friendly():
+    with isolated():
+        with voice_mode(None):
+            assert voice.enabled() is True                                      # nothing saved: friendly by default
+            settings.CONFIG.write_text(json.dumps({"defaults": {"playful": False}}))
+            assert voice.enabled() is False and voice.say("locked") == "Locked"
+            settings.CONFIG.write_text(json.dumps({"defaults": {"playful": True}}))
+            assert voice.enabled() is True
+            settings.CONFIG.write_text(json.dumps({"defaults": {"playful": "yes please"}}))   # not a real boolean: default
+            assert settings.load()["defaults"]["playful"] is True and voice.enabled() is True
+
+
+@test
+def voice_reaches_the_popup_and_the_commands():
+    import bamboo
+    with isolated(), voice_mode("friendly"):
+        settings.CONFIG.write_text(json.dumps({"apple_id": "a", "calendar": "c"}))
+        out = queue_mod.Queue()
+        calendars_add = calendars.add_event
+        calendars.add_event = lambda target, ev, ics: "School"
+        try:
+            bamboo.save_event(_ev("dentist friday 3pm"), "apple", out)
+        finally:
+            calendars.add_event = calendars_add
+        kind, title, detail = out.get_nowait()
+        assert kind == "saved" and title == "Done! Tucked into Apple Calendar" and "School" in detail and "Dentist" in detail
+        assert commands.run("/zzzz").title.startswith("I don't know /zzzz") and commands.run("/lock").title == "Locked up safe"
+    with isolated(), voice_mode("plain"):
+        assert commands.run("/lock").title == "Locked" and commands.run("/zzzz").title == "No command /zzzz"
+
+
+def _luminance(color):
+    r, g, b = (int(color.lstrip("#")[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    f = lambda c: c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4  # noqa: E731
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+
+
+def _contrast(a, b):
+    hi, lo = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+@test
+def theme_contrast_meets_wcag():
+    t = theme
+    needs = [(t.FG, t.BG, 7), (t.FG, t.CARD, 7), (t.FG, t.FIELD, 7), (t.DIM, t.BG, 4.5), (t.DIM, t.CARD, 4.5), (t.DIM, t.FIELD, 4.5),
+             (t.ACCENT, t.BG, 4.5), (t.ACCENT, t.CARD, 4.5), (t.ACCENT, t.FIELD, 4.5), (t.ON_FILL, t.ACCENT_FILL, 4.5),
+             (t.OK, t.CARD, 4.5), (t.WARN, t.CARD, 4.5), (t.ERR, t.CARD, 4.5), (t.OK, t.BG, 4.5), (t.WARN, t.BG, 4.5), (t.ERR, t.BG, 4.5)]
+    low = [(a, b, round(_contrast(a, b), 2), need) for a, b, need in needs if _contrast(a, b) < need]
+    assert not low, low
+    for token in ("BG", "CARD", "FIELD", "BORDER", "FG", "DIM", "ACCENT", "ACCENT_FILL", "OK", "WARN", "ERR", "ON_FILL"):
+        assert len(getattr(t, token)) == 7 and getattr(t, token).startswith("#"), token
+
+
+@test
+def artwork_is_complete_and_the_icon_is_a_valid_ico():
+    from PIL import Image
+    for name in ("bamboo-logo.svg", "bamboo-tile.svg", "bamboo-face.svg", "bamboo-icon.svg", "banner.png", "bamboo.ico"):
+        assert (ROOT_DIR / "assets" / name).stat().st_size > 500, name
+    expected = {"tile": [48, 64, 96, 128, 256, 512], "face": [16, 20, 24, 32, 40, 48, 64], "icon": [16, 24, 32, 48, 64, 128, 256]}
+    for kind, sizes in expected.items():
+        assert branding.sizes(kind) == sizes, kind
+        for size in sizes:
+            image = Image.open(branding.PNG / ("%s-%d.png" % (kind, size)))
+            assert image.size == (size, size) and image.mode == "RGBA", (kind, size)
+    ico = (ROOT_DIR / "assets" / "bamboo.ico").read_bytes()
+    reserved, kind, count = struct.unpack("<HHH", ico[:6])
+    assert (reserved, kind, count) == (0, 1, 7)
+    for i in range(count):
+        width, height, _c, _r, planes, bits, size, offset = struct.unpack("<BBBBHHII", ico[6 + 16 * i:22 + 16 * i])
+        assert ico[offset:offset + 8] == b"\x89PNG\r\n\x1a\n" and planes == 1 and bits == 32 and size > 100
+    assert Image.open(ROOT_DIR / "assets" / "banner.png").size == (1200, 360)
+
+
+@test
+def branding_picks_sizes_and_survives_missing_files():
+    assert branding.nearest("icon", 64) == 64 and branding.nearest("icon", 20) == 24 and branding.nearest("icon", 5000) == 256
+    assert branding.nearest("tile", 88) == 96 and branding.nearest("nothing", 32) is None
+    assert branding.pil("icon", 64).size == (64, 64) and branding.pil("icon", 40).size == (40, 40)
+    assert branding.pil("nothing", 32) is None and branding.path("nothing", 32) is None
+    saved = branding.PNG
+    branding.PNG = ROOT_DIR / "no-such-folder"
+    try:
+        assert branding.nearest("icon", 32) is None and branding.pil("icon", 32) is None          # a damaged install still starts
+    finally:
+        branding.PNG = saved
+
+
+@test
+def tray_uses_the_panda_icon():
+    import tray
+    image = tray._icon_image()
+    assert image.size == (64, 64) and image.mode == "RGBA"
+    corner, centre = image.getpixel((2, 2)), image.getpixel((32, 32))
+    assert corner[3] < 40 and centre[3] == 255                                  # rounded tile: transparent corner, solid middle
 
 
 # ------------------------------------------------------------------------------------------ runner

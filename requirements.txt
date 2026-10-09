@@ -1,4 +1,4 @@
-# Quick-add calendar tool. Python 3.11, Windows. tkinter ships with Python.
+# Bamboo, the calendar popup. Python 3.11, Windows. tkinter ships with Python.
 ctparse==0.3.6        # date/time phrases
 caldav==3.4.0         # Apple Calendar (iCloud) over CalDAV
 icalendar==7.3.0      # timezone blocks in .ics files

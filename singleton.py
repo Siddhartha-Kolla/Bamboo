@@ -1,13 +1,17 @@
-"""Windows helpers so only one quick-add popup runs, and so it can be asked to quit cleanly.
+"""Windows helpers so only one Bamboo popup runs, and so it can be asked to quit cleanly.
 
 The running popup holds a named mutex ("I exist") and a named event ("please quit"). The control
-command (quickadd_ctl.py) only needs to look the mutex up and set the event; no PID juggling.
+command (bamboo_ctl.py) only needs to look the mutex up and set the event; no PID juggling.
 """
 import ctypes
 from ctypes import wintypes
 
-MUTEX_NAME = "Local\\quickadd-popup-mutex"
-STOP_NAME = "Local\\quickadd-popup-stop"
+MUTEX_NAME = "Local\\bamboo-popup-mutex"
+STOP_NAME = "Local\\bamboo-popup-stop"
+# Names used before the rename. A popup started by an older version holds these, so they are still
+# checked (is it running?) and signalled (please quit), which lets a new `bamboo restart` replace it.
+LEGACY_MUTEX_NAME = "Local\\quickadd-popup-mutex"
+LEGACY_STOP_NAME = "Local\\quickadd-popup-stop"
 
 _ERROR_ALREADY_EXISTS = 183
 _EVENT_MODIFY_STATE = 0x0002
@@ -29,8 +33,18 @@ _k32.CloseHandle.argtypes = [wintypes.HANDLE]
 _held = []      # handles stay open for the life of the process; Windows frees them when it exits
 
 
+def _exists(mutex_name):
+    handle = _k32.OpenMutexW(_SYNCHRONIZE, False, mutex_name)
+    if handle:
+        _k32.CloseHandle(handle)
+        return True
+    return False
+
+
 def acquire():
-    """True if this process is now the only popup, False if another one already runs."""
+    """True if this process is now the only popup, False if another one (old or new) already runs."""
+    if _exists(LEGACY_MUTEX_NAME):
+        return False
     handle = _k32.CreateMutexW(None, False, MUTEX_NAME)
     if not handle:
         raise ctypes.WinError(ctypes.get_last_error())
@@ -54,18 +68,16 @@ def stop_requested(handle):
 
 
 def is_running():
-    handle = _k32.OpenMutexW(_SYNCHRONIZE, False, MUTEX_NAME)
-    if handle:
-        _k32.CloseHandle(handle)
-        return True
-    return False
+    return _exists(MUTEX_NAME) or _exists(LEGACY_MUTEX_NAME)
 
 
 def request_stop():
-    """Ask the running popup to quit. False if none is running."""
-    handle = _k32.OpenEventW(_EVENT_MODIFY_STATE, False, STOP_NAME)
-    if not handle:
-        return False
-    _k32.SetEvent(handle)
-    _k32.CloseHandle(handle)
-    return True
+    """Ask the running popup (new or old name) to quit. False if none is running."""
+    found = False
+    for name in (STOP_NAME, LEGACY_STOP_NAME):
+        handle = _k32.OpenEventW(_EVENT_MODIFY_STATE, False, name)
+        if handle:
+            _k32.SetEvent(handle)
+            _k32.CloseHandle(handle)
+            found = True
+    return found

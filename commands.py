@@ -14,8 +14,10 @@ from pathlib import Path
 from typing import Optional
 
 import calendars
+import paths
 import settings
 import vault
+import voice
 
 
 @dataclass
@@ -80,7 +82,7 @@ def _set_target(name):
     if name not in settings.configured_targets(cfg):
         return Result("error", "%s is not set up yet" % calendars.label(name), "Open /settings and connect it first.")
     settings.update({"default_target": name})
-    return Result("ok", "Default calendar: %s" % calendars.label(name), autohide=True)
+    return Result("ok", voice.say("target_set", calendar=calendars.label(name)), autohide=True)
 
 
 def _target(arg):
@@ -98,19 +100,19 @@ def _target(arg):
 
 def _lock(_arg):
     vault.lock()
-    return Result("ok", "Locked", "The passphrase is needed again for the next event.", autohide=True)
+    return Result("ok", voice.say("locked"), "The passphrase is needed again for the next event.", autohide=True)
 
 
 def _log(_arg):
-    return Result("info", "Opening the log…", str(Path.home() / ".quickadd.log"), action="log", autohide=True)
+    return Result("info", "Opening the log…", str(paths.LOG), action="log", autohide=True)
 
 
 def _restart(_arg):
-    return Result("info", "Restarting…", "Loading the latest code.", action="restart", autohide=True)
+    return Result("info", voice.say("restarting"), "Loading the latest code.", action="restart", autohide=True)
 
 
 def _quit(_arg):
-    return Result("info", "Quitting quick-add", action="quit", autohide=True)
+    return Result("info", voice.say("quitting"), action="quit", autohide=True)
 
 
 COMMANDS = {
@@ -122,8 +124,8 @@ COMMANDS = {
     "google": ("make Google Calendar the default", lambda arg: _set_target("google")),
     "lock": ("forget the passphrase now", _lock),
     "log": ("open the log file", _log),
-    "restart": ("restart quick-add (loads code changes)", _restart),
-    "quit": ("stop quick-add", _quit),
+    "restart": ("restart Bamboo (loads code changes)", _restart),
+    "quit": ("stop Bamboo", _quit),
 }
 
 
@@ -155,7 +157,7 @@ def suggestions(text):
     name, _arg = _split(text)
     found = matches(text)
     if not found:
-        return "No command /%s" % name, "Type /help to see them."
+        return voice.say("unknown_command", name=name), "Type /help to see them."
     first = found[0]
     return "/%s  ·  %s" % (first, COMMANDS[first][0]), "   ".join("/" + n for n in found[:8]) + "     (Tab completes, Enter runs)"
 
@@ -170,4 +172,4 @@ def run(text):
         return COMMANDS[found[0]][1](arg)               # "/sett" runs /settings
     if not name:
         return COMMANDS["help"][1]("")
-    return Result("error", "No command /%s" % name, "Type /help to see them.")
+    return Result("error", voice.say("unknown_command", name=name), "Type /help to see them.")

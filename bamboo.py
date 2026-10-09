@@ -1,7 +1,7 @@
-"""Quick-add calendar popup (Windows). Press the hotkey, type "dentist friday 3pm", Enter.
+"""Bamboo, the calendar popup (Windows). Press the hotkey, type "dentist friday 3pm", Enter.
 
-    pythonw quickadd.py        # no console window; python quickadd.py to see errors
-    qa start | stop | restart  # see quickadd_ctl.py
+    pythonw bamboo.py              # no console window; python bamboo.py to see errors
+    bamboo start | stop | restart  # see bamboo_ctl.py
 
 Standard library for the window (tkinter) and the global hotkey (RegisterHotKey via ctypes). Parsing is
 eventparser.py, calendar files are eventout.py, calendars are calendars.py, secrets are vault.py.
@@ -19,13 +19,17 @@ import tkinter.font as tkfont
 from ctypes import wintypes
 from pathlib import Path
 
+import bamboo_ctl
+import branding
 import calendars
 import commands
 import eventparser
+import paths
 import settings
 import singleton
 import theme
 import vault
+import voice
 from eventout import OUT_DIR, build_ics, write_ics                      # noqa: F401 - re-exported for scripts/tests
 from eventout import local_zone as _local_zone                           # noqa: F401
 from eventparser import parse   # ctparse is imported lazily inside, on the first keystroke
@@ -83,13 +87,13 @@ def save_event(ev, target, out):
     try:
         cal = calendars.add_event(target, ev, build_ics(ev))
         if calendars.is_manual(target):               # only opened in the browser: the user still presses Save there
-            out.put(("opened", "Opened in %s" % calendars.label(target), "Press Save in your browser  ·  %s" % ev["title"]))
+            out.put(("opened", voice.say("opened", calendar=calendars.label(target)), "Press Save in your browser  ·  %s" % ev["title"]))
         else:
-            out.put(("saved", "Added to %s" % calendars.label(target), "%s  ·  %s" % (cal, ev["title"])))
+            out.put(("saved", voice.say("saved", calendar=calendars.label(target)), "%s  ·  %s" % (cal, ev["title"])))
     except Exception as err:  # noqa: BLE001 - any failure must still end in a saved file
         try:
             path = write_ics(ev)
-            out.put(("fallback", "%s failed, saved a file instead" % calendars.label(target),
+            out.put(("fallback", voice.say("fallback", calendar=calendars.label(target)),
                      "%s  (%s)" % (path.name, err)))
         except OSError as os_err:
             out.put(("error", "Could not save", str(os_err)))
@@ -161,7 +165,10 @@ class Popup:
         # input row
         row = tk.Frame(outer, bg=BG)
         row.pack(fill="x", padx=self.SIDE, pady=(self.px(24), self.px(20)))
-        if has_icons:
+        self.mascot = branding.photo("tile", self.px(44), master=r)
+        if self.mascot is not None:                                   # the panda; the old calendar glyph is the fallback
+            tk.Label(row, image=self.mascot, bg=BG).pack(side="left", padx=(0, self.px(14)))
+        elif has_icons:
             tk.Label(row, text=CALENDAR_GLYPH, font=(ICON_FONT, 17), bg=BG, fg=ACCENT).pack(side="left", padx=(0, self.px(14)))
         self.var = tk.StringVar()
         self.entry = tk.Entry(row, textvariable=self.var, font=(FONT, 18), bg=BG, fg=FG,
@@ -211,7 +218,7 @@ class Popup:
         self.tray = None
         if service:
             import tray
-            from quickadd_ctl import autostart_enabled, set_autostart
+            from bamboo_ctl import autostart_enabled, set_autostart
             self.stop_event = singleton.create_stop_event()
             self.tray = tray.start(self.events, hotkey_label(), autostart_enabled,
                                    lambda: set_autostart(not autostart_enabled()))
@@ -305,7 +312,7 @@ class Popup:
 
     def update_footer(self, override=None):
         target = calendars.choose_target(override=override)
-        self.foot_lbl.config(text=calendars.footer_label(target) if target else "Saved to Documents\\quickadd")
+        self.foot_lbl.config(text=calendars.footer_label(target) if target else "Saved to Documents\\Bamboo")
 
     def refresh(self):
         if self.unlocking:
@@ -320,7 +327,7 @@ class Popup:
         self.update_footer(override)
         ev = parse(clean)
         if ev is None:
-            self.set_card(DIM, "Describe your event", DIM,
+            self.set_card(DIM, voice.say("empty"), DIM,
                           "dentist friday 3pm   ·   lunch with Sam tomorrow 12:30   ·   /help for commands", "")
             self.date_lbl.config(fg=DIM)
         else:
@@ -375,7 +382,7 @@ class Popup:
         self.unlocking, self.pending, self.pending_text, self.pending_target = True, ev, typed, target
         self.var.set("")
         self.entry.config(show="•")
-        self.set_card(WARN, "Unlock %s" % calendars.label(target), FG, "Type your passphrase and press Enter", "")
+        self.set_card(WARN, voice.say("unlock", calendar=calendars.label(target)), FG, "Type your passphrase and press Enter", "")
         self.date_lbl.config(fg=DIM)
 
     def leave_unlock_mode(self):
@@ -401,7 +408,7 @@ class Popup:
     def on_unlock_result(self, ok):
         self.busy = False
         if not ok:
-            self.set_card(ERR, "Wrong passphrase", ERR, "Try again, or press Esc to go back", "")
+            self.set_card(ERR, voice.say("wrong_passphrase"), ERR, "Try again, or press Esc to go back", "")
             self.date_lbl.config(fg=DIM)
             return
         ev, target = self.pending, self.pending_target
@@ -410,7 +417,7 @@ class Popup:
 
     def start_save(self, ev, target):
         self.busy = True
-        self.set_card(ACCENT, ("Opening %s…" if calendars.is_manual(target) else "Adding to %s…") % calendars.label(target),
+        self.set_card(ACCENT, voice.say("opening" if calendars.is_manual(target) else "adding", calendar=calendars.label(target)),
                       DIM, ev["title"], "")
         self.date_lbl.config(fg=DIM)
         threading.Thread(target=save_event, args=(ev, target, self.events), daemon=True).start()
@@ -464,7 +471,7 @@ class Popup:
 
     def restart(self):
         """Hand over to the control command, which stops this process and starts a fresh one (new code)."""
-        ctl = Path(__file__).resolve().with_name("quickadd_ctl.py")
+        ctl = Path(__file__).resolve().with_name("bamboo_ctl.py")
         subprocess.Popen([sys.executable, str(ctl), "restart"], creationflags=0x08000000 | 0x00000008,
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -472,12 +479,12 @@ class Popup:
         self.root.mainloop()
 
 
-LOG = Path.home() / ".quickadd.log"
-PIDFILE = Path.home() / ".quickadd.pid"
+LOG = paths.LOG
+PIDFILE = paths.PIDFILE
 
 
 def _log_to_file():
-    """Under pythonw there is no console, so errors would vanish: keep them in ~/.quickadd.log."""
+    """Under pythonw there is no console, so errors would vanish: keep them in ~/.bamboo.log."""
     if ctypes.windll.kernel32.GetConsoleWindow():      # started from a terminal: keep output there
         return
     try:
@@ -496,6 +503,14 @@ def main():
         return
     PIDFILE.write_text(str(os.getpid()))
     atexit.register(lambda: PIDFILE.unlink(missing_ok=True))
+    copied = paths.migrate()                                  # first start after the rename: copy old settings and vault
+    if copied:
+        print("copied from the old quickadd files: %s" % ", ".join(copied))
+    try:
+        if bamboo_ctl.upgrade_autostart():                    # an old startup shortcut would point at a file that is gone
+            print("upgraded the start-with-Windows shortcut")
+    except Exception as err:  # noqa: BLE001 - never stop the popup over a shortcut
+        print("could not upgrade the startup shortcut: %s" % err)
     Popup(service=True).run()
 
 

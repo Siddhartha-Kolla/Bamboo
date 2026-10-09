@@ -1,0 +1,3 @@
+# Only needed to rebuild the artwork (tools/make_assets.py); users never need these.
+resvg-py>=0.5
+pillow>=10

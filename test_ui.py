@@ -3,7 +3,7 @@
     python test_ui.py
 
 It briefly shows the popup on your screen. The calendar call is stubbed, so no account is contacted, and
-the real ~/.quickadd.* files are never touched. Do not type while it runs: stray keys end up in its window.
+the real ~/.bamboo.* and ~/.quickadd.* files are never touched. Do not type while it runs: stray keys end up in its window.
 """
 import json
 import sys
@@ -14,9 +14,11 @@ from pathlib import Path
 
 import calendars
 import eventout
-import quickadd
+import bamboo
 import settings
+import theme
 import vault
+import voice
 
 _REAL_ADD = calendars.add_event                  # earlier flows stub calendars.add_event; the link flow needs the real one
 RESULTS = []
@@ -31,6 +33,7 @@ def check(name, condition, detail=""):
 def redirect(tmp):
     """Point every real path at the temp folder. Called before anything else can write."""
     import google_cal
+    voice.FORCE = "plain"                                  # exact wording; the brand flow switches it on
     vault.VAULT, settings.CONFIG, eventout.OUT_DIR = tmp / "v.vault", tmp / "c.json", tmp / "out"
     google_cal.CLIENT_FILE = tmp / "google_client.json"          # absent unless a flow ships one
     assert settings.CONFIG.parent == tmp and vault.VAULT.parent == tmp
@@ -48,7 +51,7 @@ def reset(tmp):
 
 def make_popup(tmp):
     redirect(tmp)
-    p = quickadd.Popup()
+    p = bamboo.Popup()
     p.root.unbind("<FocusOut>")                  # test only: another window taking focus must not hide it
     return p
 
@@ -118,7 +121,7 @@ def run_no_calendar_flow(tmp):
     p = make_popup(tmp)
     p.show()
     pump(p, 0.2)
-    check("footer says a file when no calendar is set up", "quickadd" in p.foot_lbl.cget("text"), p.foot_lbl.cget("text"))
+    check("footer says a file when no calendar is set up", "Bamboo" in p.foot_lbl.cget("text"), p.foot_lbl.cget("text"))
     type_and_enter(p, "dentist friday 3pm")
     pump(p, 0.5)
     files = list((tmp / "out").glob("*.ics"))
@@ -239,7 +242,7 @@ def run_settings_flow(tmp):
     import eventparser
     import google_cal
     import icloud
-    import quickadd_ctl
+    import bamboo_ctl
     import settings_window as sw
 
     reset(tmp)
@@ -255,8 +258,8 @@ def run_settings_flow(tmp):
     fake_http = _Http()
     google_cal._http = fake_http
     autostart = {"on": False}
-    quickadd_ctl.autostart_enabled = lambda: autostart["on"]
-    quickadd_ctl.set_autostart = lambda on: autostart.update(on=on)
+    bamboo_ctl.autostart_enabled = lambda: autostart["on"]
+    bamboo_ctl.set_autostart = lambda on: autostart.update(on=on)
 
     p = make_popup(tmp)
     restarted = []
@@ -536,12 +539,53 @@ def run_google_link_flow(tmp):
     p.root.destroy()
 
 
+def run_brand_flow(tmp):
+    """The panda, the colours and the friendly voice in the real windows."""
+    import settings_window as sw
+
+    reset(tmp)
+    settings.CONFIG.write_text(json.dumps({"apple_id": "me@icloud.com", "calendar": "School"}))
+    p = make_popup(tmp)
+    p.show()
+    pump(p, 0.3)
+    check("the popup header shows the panda", p.mascot is not None and p.mascot.width() >= 40, getattr(p, "mascot", None))
+    check("the popup uses the brand background", p.root.cget("bg") == theme.BORDER and p.title_lbl.cget("bg") == theme.CARD)
+    voice.FORCE, picked = "friendly", voice._pick
+    voice._pick = lambda options: options[0]
+    p.var.set("")
+    p.refresh()
+    check("friendly wording on the empty card", card(p)[0] == "What's coming up?", card(p))
+    voice.FORCE = "plain"
+    p.refresh()
+    check("plain wording when the voice is off", card(p)[0] == "Describe your event", card(p))
+    voice._pick = picked
+
+    w = sw.open_window(p)
+    pump(p, 0.4)
+    check("the settings window shows the panda and has its icon", w.mascot is not None and getattr(w.top, "_bamboo_icon", None) is not None)
+    check("primary buttons use the brand indigo with white text",
+          w.g_signin_btn.cget("bg") == theme.ACCENT_FILL and w.g_signin_btn.cget("fg") == theme.ON_FILL, (w.g_signin_btn.cget("bg"), w.g_signin_btn.cget("fg")))
+    check("the friendly-messages switch starts on", w.playful_var.get() is True)
+    w.playful_var.set(False)
+    w.toggle_playful()
+    check("switching it off is saved", settings.load()["defaults"]["playful"] is False and "plain" in w.general_msg.cget("text"), w.general_msg.cget("text"))
+    w.playful_var.set(True)
+    w.toggle_playful()
+    check("and back on", settings.load()["defaults"]["playful"] is True)
+    guide = w.show_guide()
+    pump(p, 0.4)
+    check("the guide has the panda and the brand badges", w.guide_mascot is not None and getattr(guide, "_bamboo_icon", None) is not None)
+    guide.destroy()
+    w.close()
+    p.root.destroy()
+
+
 def main():
     only = sys.argv[1:] or None
     flows = [("unlock flow", run_unlock_flow), ("no-calendar flow", run_no_calendar_flow),
              ("commands flow", run_commands_flow), ("override flow", run_override_not_configured_flow),
              ("settings flow", run_settings_flow), ("shipped client flow", run_shipped_client_flow),
-             ("google link flow", run_google_link_flow)]
+             ("google link flow", run_google_link_flow), ("brand flow", run_brand_flow)]
     real_add = calendars.add_event
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)

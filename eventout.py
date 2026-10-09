@@ -10,9 +10,10 @@ import re
 import uuid
 from pathlib import Path
 
+import paths
 import settings
 
-OUT_DIR = Path.home() / "Documents" / "quickadd"
+OUT_DIR = paths.OUT_DIR
 
 
 def local_zone():
@@ -56,8 +57,8 @@ def build_ics(ev):
             as_utc = lambda value: value.astimezone(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")  # noqa: E731 - naive = PC local time
             when = "DTSTART:%s\r\nDTEND:%s" % (as_utc(ev["start"]), as_utc(ev["end"]))
     title = ev["title"].replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
-    lines = (["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//quickadd//EN"] + zone_lines
-             + ["BEGIN:VEVENT", "UID:%s@quickadd" % uuid.uuid4(), "DTSTAMP:" + stamp, when, "SUMMARY:" + title])
+    lines = (["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//bamboo//EN"] + zone_lines
+             + ["BEGIN:VEVENT", "UID:%s@bamboo" % uuid.uuid4(), "DTSTAMP:" + stamp, when, "SUMMARY:" + title])
     if ev.get("rrule"):
         lines.append("RRULE:" + ev["rrule"])
     return "\r\n".join(lines + ["END:VEVENT", "END:VCALENDAR", ""])

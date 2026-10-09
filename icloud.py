@@ -1,7 +1,7 @@
 """Add events to Apple Calendar (iCloud) over CalDAV. Works from Windows; no Apple device needed.
 
-The app-specific password lives in the passphrase vault (vault.py, ~/.quickadd.vault) and the Apple ID
-and calendar name in ~/.quickadd.json (settings.py). The popup asks for the passphrase once, then keeps
+The app-specific password lives in the passphrase vault (vault.py, ~/.bamboo.vault) and the Apple ID
+and calendar name in ~/.bamboo.json (settings.py). The popup asks for the passphrase once, then keeps
 the password in memory for a while (see vault.UNLOCK_IDLE_SECONDS).
 
     python icloud.py setup       # Apple ID, app-specific password, passphrase
@@ -16,11 +16,12 @@ Manager, no passphrase).
 import getpass
 import sys
 
+import paths
 import settings
 import vault
 from vault import Locked, has_vault, is_unlocked, lock, needs_unlock, unlock  # noqa: F401 - re-exported
 
-SERVICE = "quickadd-icloud"
+SERVICE = paths.KEYRING_SERVICE
 URL = "https://caldav.icloud.com"
 SECRET = "apple_password"
 
@@ -119,7 +120,7 @@ def setup(use_keyring=False):
     print("\nCalendars:")
     for i, name in enumerate(names, 1):
         print("  %d. %s" % (i, name))
-    pick = input("Which one should quick-add use? [1] ").strip() or "1"
+    pick = input("Which one should Bamboo use? [1] ").strip() or "1"
     if not (pick.isdigit() and 1 <= int(pick) <= len(names)):
         raise SystemExit("Not a valid choice.")
     if use_keyring:
@@ -128,7 +129,7 @@ def setup(use_keyring=False):
     else:
         _store_password(password)
     settings.update({"apple_id": apple_id, "calendar": names[int(pick) - 1]})
-    print("\nSaved. Quick-add can now add events to %r." % names[int(pick) - 1])
+    print("\nSaved. Bamboo can now add events to %r." % names[int(pick) - 1])
 
 
 def protect():
@@ -178,6 +179,7 @@ def status():
 
 
 if __name__ == "__main__":
+    paths.migrate()                                    # first run after the rename: copy old settings and vault
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
     if cmd == "setup":
         setup(use_keyring="--keyring" in sys.argv)

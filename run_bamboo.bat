@@ -1,2 +1,2 @@
 @echo off
-call "%~dp0qa.bat" start
+call "%~dp0bamboo.bat" start

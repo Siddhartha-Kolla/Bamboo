@@ -4,8 +4,8 @@ You create the OAuth client yourself (Google Cloud Console -> Desktop app); see 
 ever leaves your PC except calls to Google's own endpoints.
 
 Where things live:
-  settings (plain text, ~/.quickadd.json):  google.client_id, google.calendar_id, google.calendar_name
-  vault (encrypted, ~/.quickadd.vault):     google_client_secret, google_refresh_token
+  settings (plain text, ~/.bamboo.json):  google.client_id, google.calendar_id, google.calendar_name
+  vault (encrypted, ~/.bamboo.vault):     google_client_secret, google_refresh_token
   memory only, a few minutes:               the short-lived access token
 
 Scope is calendar.events (create/edit events). Tokens and secrets are never printed or logged.
@@ -109,9 +109,9 @@ def _describe(response):
 
 
 class _Redirect(http.server.BaseHTTPRequestHandler):
-    PAGE = (b"<!doctype html><meta charset=utf-8><title>Quick add</title>"
+    PAGE = (b"<!doctype html><meta charset=utf-8><title>Bamboo</title>"
             b"<body style='font:16px Segoe UI,sans-serif;background:#17181d;color:#eceef4;padding:3em'>"
-            b"<h2>Signed in.</h2><p>You can close this tab and go back to quick-add.</p>")
+            b"<h2>Signed in.</h2><p>You can close this tab and go back to Bamboo.</p>")
 
     def do_GET(self):
         q = {k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).items()}

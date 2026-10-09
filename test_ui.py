@@ -29,14 +29,17 @@ def check(name, condition, detail=""):
 
 def redirect(tmp):
     """Point every real path at the temp folder. Called before anything else can write."""
+    import google_cal
     vault.VAULT, settings.CONFIG, eventout.OUT_DIR = tmp / "v.vault", tmp / "c.json", tmp / "out"
+    google_cal.CLIENT_FILE = tmp / "google_client.json"          # absent unless a flow ships one
     assert settings.CONFIG.parent == tmp and vault.VAULT.parent == tmp
     vault.lock()
 
 
 def reset(tmp):
     redirect(tmp)
-    for f in (vault.VAULT, settings.CONFIG):
+    import google_cal
+    for f in (vault.VAULT, settings.CONFIG, google_cal.CLIENT_FILE):
         f.unlink(missing_ok=True)
     for f in (tmp / "out").glob("*") if (tmp / "out").exists() else []:
         f.unlink()
@@ -320,7 +323,7 @@ def run_settings_flow(tmp):
     w.g_cal_var.set("Team")
     w.google_save_calendar()
     g = settings.load()["google"]
-    check("saving the calendar makes Google usable", g == {"client_id": "cid.apps.googleusercontent.com", "calendar_id": "team@group", "calendar_name": "Team"}
+    check("saving the calendar makes Google usable", g == {"client_id": "cid.apps.googleusercontent.com", "own_client": True, "calendar_id": "team@group", "calendar_name": "Team"}
           and settings.google_configured() and "Connected: Team" in w.google_state.cget("text"), g)
 
     # --- Defaults
@@ -385,11 +388,66 @@ def run_settings_flow(tmp):
     p.root.destroy()
 
 
+def run_shipped_client_flow(tmp):
+    """The normal-user path: the app ships one Google client, so the user only presses 'Sign in with Google'."""
+    import google_cal
+    import settings_window as sw
+
+    reset(tmp)
+    google_cal.CLIENT_FILE.write_text(json.dumps({"client_id": "123456789012-abcdefg.apps.googleusercontent.com", "client_secret": "GOCSPX-shipped"}))
+    answers = ["pass-phrase-1"]
+    sw.ask_passphrase = lambda parent, title, prompt, confirm=False: answers.pop(0) if answers else None
+    seen = []
+    google_cal.sign_in = lambda client_id, secret, cancel=None: seen.append((client_id, secret)) or {
+        "refresh_token": "R-tok", "access_token": "A", "expires_in": 3600}
+    google_cal.list_calendars = lambda: [{"id": "me@gmail.com", "name": "me@gmail.com", "primary": True}]
+    google_cal._http = _Http()
+
+    p = make_popup(tmp)
+    w = sw.open_window(p)
+    pump(p, 0.4)
+    check("with a shipped client the client ID/secret fields are hidden", not w.g_adv.winfo_ismapped() and not w.g_adv.winfo_viewable(),
+          (w.g_adv.winfo_ismapped(), ))
+    check("the advanced switch is offered", "own Google project" in w.g_own_btn.cget("text"), w.g_own_btn.cget("text"))
+    check("the status invites a single click", "Sign in with Google" in w.google_state.cget("text"), w.google_state.cget("text"))
+
+    w.google_sign_in()                                           # nothing typed anywhere
+    pump(p, 0.8)
+    check("sign-in needs no typing and uses the shipped client", seen == [("123456789012-abcdefg.apps.googleusercontent.com", "GOCSPX-shipped")], seen)
+    check("only the refresh token is stored; the shared secret is not copied", vault.names() == ["google_refresh_token"], vault.names())
+    check("settings remember the shared client, not an own project",
+          settings.load()["google"] == {"client_id": "123456789012-abcdefg.apps.googleusercontent.com", "own_client": False}, settings.load()["google"])
+    check("the calendar list appears with the primary selected", w.g_cal_var.get() == "me@gmail.com", w.g_cal_var.get())
+    w.google_save_calendar()
+    check("saving the calendar makes Google usable", settings.google_configured() and "Connected: me@gmail.com" in w.google_state.cget("text"))
+
+    w.toggle_own()
+    pump(p, 0.2)
+    check("the advanced switch reveals the fields for an own project", w.g_adv.winfo_ismapped() and "built-in" in w.g_own_btn.cget("text"), w.g_own_btn.cget("text"))
+    w.g_id_var.set("")
+    w.g_secret_var.set("")
+    w.google_sign_in()
+    check("in own-project mode the fields are required", "client ID" in w.google_msg.cget("text"), w.google_msg.cget("text"))
+    w.toggle_own()
+    pump(p, 0.2)
+    check("switching back hides them again", not w.g_adv.winfo_ismapped())
+
+    w.close()
+    sw._open["win"] = None
+    google_cal.CLIENT_FILE.unlink()
+    w = sw.open_window(p)
+    pump(p, 0.4)
+    check("with no shipped client the own-project fields are shown and explained",
+          w.g_adv.winfo_ismapped() and "no built-in" in w.g_own_btn.cget("text"), w.g_own_btn.cget("text"))
+    w.close()
+    p.root.destroy()
+
+
 def main():
     only = sys.argv[1:] or None
     flows = [("unlock flow", run_unlock_flow), ("no-calendar flow", run_no_calendar_flow),
              ("commands flow", run_commands_flow), ("override flow", run_override_not_configured_flow),
-             ("settings flow", run_settings_flow)]
+             ("settings flow", run_settings_flow), ("shipped client flow", run_shipped_client_flow)]
     real_add = calendars.add_event
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)

@@ -290,16 +290,45 @@ class SettingsWindow:
         self._heading(page, 7, "Google Calendar")
         self.google_state = self._status(page, 8)
         self.g_id_var, self.g_secret_var, self.g_cal_var = tk.StringVar(), tk.StringVar(), tk.StringVar()
-        self._field(page, 9, "Client ID", self.g_id_var)
-        self._field(page, 10, "Client secret", self.g_secret_var, show="•")
-        self.g_cal = self._combo(page, 11, "Calendar", self.g_cal_var)
-        self.g_signin_btn = self._button(page, "Sign in with Google", self.google_sign_in)
-        self.g_save_btn = self._button(page, "Save calendar", self.google_save_calendar, primary=True)
+        self.g_own_var = tk.BooleanVar()                          # True: sign in with the user's own Google project
+        self.g_own_touched = False
+        self.g_cal = self._combo(page, 9, "Calendar", self.g_cal_var)
+        self.g_signin_btn = self._button(page, "Sign in with Google", self.google_sign_in, primary=True)
+        self.g_save_btn = self._button(page, "Save calendar", self.google_save_calendar)
         self.g_off_btn = self._button(page, "Disconnect", lambda: self.confirm_twice(
             "google", self.g_off_btn, "Disconnect", self.google_disconnect))
-        self.g_guide_btn = self._button(page, "Setup guide", self.show_guide)
-        self._row(page, 12, self.g_signin_btn, self.g_save_btn, self.g_off_btn, self.g_guide_btn)
-        self.google_msg = self._status(page, 13)
+        self._row(page, 10, self.g_signin_btn, self.g_save_btn, self.g_off_btn)
+        self.google_msg = self._status(page, 11)
+        # "Advanced": your own Google project instead of the one built into the app
+        self.g_own_btn = tk.Button(page, text="", command=self.toggle_own, bg=CARD, fg=DIM, activebackground=CARD, activeforeground=FG,
+                                   relief="flat", bd=0, font=(theme.FONT, 10), cursor="hand2", anchor="w")
+        self.g_own_btn.grid(row=12, column=0, columnspan=3, sticky="w", pady=(self.px(10), 0))
+        self.g_adv = tk.Frame(page, bg=CARD)
+        self.g_adv.grid(row=13, column=0, columnspan=3, sticky="ew")
+        self.g_adv.columnconfigure(1, weight=1)
+        self._field(self.g_adv, 0, "Client ID", self.g_id_var)
+        self._field(self.g_adv, 1, "Client secret", self.g_secret_var, show="•")
+        self.g_guide_btn = self._button(self.g_adv, "Setup guide", self.show_guide)
+        self.g_guide_btn.grid(row=2, column=0, columnspan=2, sticky="w", pady=(self.px(8), 0))
+
+    def toggle_own(self):
+        self.g_own_touched = True
+        self.g_own_var.set(not self.g_own_var.get())
+        self._apply_own_mode()
+
+    def _apply_own_mode(self):
+        """Show the client ID/secret fields only when the user's own Google project is in use."""
+        import google_cal
+        has_builtin = google_cal.bundled_client() is not None
+        own = self.g_own_var.get() or not has_builtin
+        if own:
+            self.g_adv.grid()
+        else:
+            self.g_adv.grid_remove()
+        if has_builtin:
+            self.g_own_btn.config(text="▾  Use the built-in sign-in instead" if own else "▸  Advanced: use my own Google project")
+        else:
+            self.g_own_btn.config(text="This copy has no built-in Google sign-in, so use your own Google project (see Setup guide).")
 
     def apple_connect(self):
         apple_id, password = self.apple_id_var.get().strip(), self.apple_pw_var.get().strip()
@@ -376,21 +405,27 @@ class SettingsWindow:
         if self.cancel is not None and not self.cancel.is_set():          # the button doubles as Cancel while waiting
             self.cancel.set()
             return
-        client_id, secret = self.g_id_var.get().strip(), self.g_secret_var.get().strip()
-        if not client_id or not secret:
-            self.say(self.google_msg, "Paste the client ID and client secret from Google Cloud first (see Setup guide).", "error")
-            return
+        builtin = google_cal.bundled_client()
+        own = self.g_own_var.get() or builtin is None
+        if own:
+            client_id, secret = self.g_id_var.get().strip(), self.g_secret_var.get().strip()
+            if not client_id or not secret:
+                self.say(self.google_msg, "Paste the client ID and client secret from your Google Cloud project first (see Setup guide).", "error")
+                return
+        else:
+            client_id, secret = builtin
         if not self.ensure_unlocked(self.google_msg):
             self.say(self.google_msg, "Not started: the passphrase is needed to store the sign-in.", "error")
             return
         self.cancel = threading.Event()
         self.g_signin_btn.config(text="Cancel")
-        self.say(self.google_msg, "Waiting for you in the browser…")
+        self.say(self.google_msg, "Your browser opens next. Choose your Google account and press Allow." if not own
+                 else "Waiting for you in the browser…")
         cancel = self.cancel
         self.run_async(lambda: google_cal.sign_in(client_id, secret, cancel=cancel),
-                       lambda tokens, error: self._google_signed_in(client_id, secret, tokens, error))
+                       lambda tokens, error: self._google_signed_in(client_id, secret, own, tokens, error))
 
-    def _google_signed_in(self, client_id, secret, tokens, error):
+    def _google_signed_in(self, client_id, secret, own, tokens, error):
         import google_cal
         self.cancel = None
         self.g_signin_btn.config(text="Sign in with Google")
@@ -398,7 +433,8 @@ class SettingsWindow:
             self.say(self.google_msg, str(error), "error")
             return
         try:
-            google_cal.save_connection(client_id, secret, tokens["refresh_token"], tokens.get("access_token"), tokens.get("expires_in", 0))
+            google_cal.save_connection(client_id, secret, tokens["refresh_token"], tokens.get("access_token"),
+                                       tokens.get("expires_in", 0), own_client=own)
         except vault.Locked:
             self.say(self.google_msg, "The vault locked while you signed in. Press Sign in again.", "error")
             return
@@ -577,9 +613,12 @@ class SettingsWindow:
         elif g.get("client_id"):
             self.say(self.google_state, "Signed in, but no calendar chosen yet.", "warn")
         else:
-            self.say(self.google_state, "Not connected. Needs a one-time Google Cloud setup (see Setup guide).", "info")
-        if g.get("client_id"):
+            self.say(self.google_state, "Not connected. Press “Sign in with Google”.", "info")
+        if g.get("own_client") and g.get("client_id"):
             self.g_id_var.set(g["client_id"])
+        if not self.g_own_touched:
+            self.g_own_var.set(bool(g.get("own_client")))
+        self._apply_own_mode()
         # Defaults
         ready = [settings.LABELS[t] for t in settings.configured_targets(cfg)]
         self.target_box.config(values=ready, state="readonly" if ready else "disabled")

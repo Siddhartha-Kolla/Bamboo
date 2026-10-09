@@ -18,12 +18,14 @@ from pathlib import Path
 
 import calendars
 import eventout
+import google_cal
 import settings
 import vault
 
 # Safety net: from import time on, nothing in this process can reach the real ~/.quickadd.* files.
 _SAFE = Path(tempfile.mkdtemp(prefix="quickadd-test-"))
 vault.VAULT, settings.CONFIG, eventout.OUT_DIR = _SAFE / "v.vault", _SAFE / "c.json", _SAFE / "out"
+google_cal.CLIENT_FILE = _SAFE / "google_client.json"
 
 TESTS = []
 
@@ -38,14 +40,15 @@ def isolated():
     """Point vault/settings/output at a temp folder and reset the in-memory unlock state."""
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
-        saved = (vault.VAULT, settings.CONFIG, eventout.OUT_DIR, vault.UNLOCK_IDLE_SECONDS)
+        saved = (vault.VAULT, settings.CONFIG, eventout.OUT_DIR, vault.UNLOCK_IDLE_SECONDS, google_cal.CLIENT_FILE)
         vault.VAULT, settings.CONFIG, eventout.OUT_DIR = tmp / "v.vault", tmp / "c.json", tmp / "out"
+        google_cal.CLIENT_FILE = tmp / "google_client.json"            # absent unless a test writes one
         vault.lock()
         try:
             yield tmp
         finally:
             vault.lock()
-            vault.VAULT, settings.CONFIG, eventout.OUT_DIR, vault.UNLOCK_IDLE_SECONDS = saved
+            vault.VAULT, settings.CONFIG, eventout.OUT_DIR, vault.UNLOCK_IDLE_SECONDS, google_cal.CLIENT_FILE = saved
 
 
 def raises(exc, fn, *args):
@@ -549,6 +552,70 @@ def google_disconnect_while_locked_changes_nothing():
         vault.lock()
         raises(vault.Locked, google_cal.disconnect)
         assert settings.load()["google"]["client_id"] == "cid"
+
+
+BUNDLED = ("123456789012-abcdefg.apps.googleusercontent.com", "GOCSPX-shipped-secret")
+
+
+def _ship_client(client_id=BUNDLED[0], secret=BUNDLED[1]):
+    google_cal.CLIENT_FILE.write_text(json.dumps({"client_id": client_id, "client_secret": secret}))
+
+
+@test
+def google_bundled_client_file_parsing():
+    with isolated():
+        assert google_cal.bundled_client() is None                                   # no file shipped
+        _ship_client()
+        assert google_cal.bundled_client() == BUNDLED
+        for bad in [{"client_id": "PASTE-THE-CLIENT-ID.apps.googleusercontent.com", "client_secret": "PASTE-THE-CLIENT-SECRET"},
+                    {"client_id": "not-a-client-id", "client_secret": "x"},
+                    {"client_id": BUNDLED[0], "client_secret": ""}, {"client_id": BUNDLED[0]}, {}]:
+            google_cal.CLIENT_FILE.write_text(json.dumps(bad))
+            assert google_cal.bundled_client() is None, bad
+        google_cal.CLIENT_FILE.write_text("{ not json")
+        assert google_cal.bundled_client() is None
+        example = Path(__file__).with_name("google_client.example.json")
+        google_cal.CLIENT_FILE = example
+        assert google_cal.bundled_client() is None                                   # the shipped example is a placeholder
+
+
+@test
+def google_client_credentials_precedence():
+    with google_env():                                                               # vault holds an own-project secret
+        assert google_cal.using_own_client() and google_cal.client_credentials() == ("cid", "csecret")     # nothing shipped
+        _ship_client()
+        assert not google_cal.using_own_client() and google_cal.client_credentials() == BUNDLED            # shipped client wins
+        vault.lock()
+        assert google_cal.client_credentials() == BUNDLED                            # needs no vault at all
+        vault.unlock("pass-phrase-1")
+        settings.update({"google": {"own_client": True}})
+        assert google_cal.using_own_client() and google_cal.client_credentials() == ("cid", "csecret")     # user opted out
+
+
+@test
+def google_token_renewal_uses_the_shipped_client():
+    token = FakeResponse(200, {"access_token": "A", "expires_in": 3600})
+    with google_env({("POST", "/token"): [token]}) as fake:
+        vault.delete(google_cal.SECRET_CLIENT)                                       # as after a shipped-client sign-in
+        _ship_client()
+        settings.update({"google": {"client_id": BUNDLED[0]}})
+        assert google_cal._access_token() == "A"
+        sent = fake.calls[0][2]["data"]
+        assert sent["client_id"] == BUNDLED[0] and sent["client_secret"] == BUNDLED[1] and sent["refresh_token"] == "r-tok"
+
+
+@test
+def google_save_connection_shipped_vs_own_client():
+    with google_env(config={}, unlocked=False):
+        vault.create("pass-phrase-1", {})
+        google_cal.save_connection(BUNDLED[0], BUNDLED[1], "r1")
+        assert vault.names() == [google_cal.SECRET_REFRESH]                          # the shared secret is not copied per user
+        assert settings.load()["google"] == {"client_id": BUNDLED[0], "own_client": False}
+        google_cal.save_connection("own-id", "own-secret", "r2", own_client=True)
+        assert vault.get(google_cal.SECRET_CLIENT) == "own-secret" and vault.get(google_cal.SECRET_REFRESH) == "r2"
+        assert settings.load()["google"] == {"client_id": "own-id", "own_client": True}
+        google_cal.save_connection(BUNDLED[0], BUNDLED[1], "r3")                     # switching back drops the own secret
+        assert google_cal.SECRET_CLIENT not in vault.names()
 
 
 # ----------------------------------------------------------------------------------------- commands

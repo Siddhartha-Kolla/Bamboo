@@ -14,6 +14,8 @@ import base64
 import datetime as dt
 import hashlib
 import http.server
+import json
+import re
 import secrets as _secrets
 import threading
 import time
@@ -26,6 +28,9 @@ import eventout
 import settings
 import vault
 
+from pathlib import Path  # noqa: E402
+
+CLIENT_FILE = Path(__file__).with_name("google_client.json")      # the shared client shipped with the app
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 REVOKE_URL = "https://oauth2.googleapis.com/revoke"
@@ -34,6 +39,17 @@ SCOPE = "https://www.googleapis.com/auth/calendar.events"
 SECRET_CLIENT = "google_client_secret"
 SECRET_REFRESH = "google_refresh_token"
 TIMEOUT = 20
+
+DEVELOPER_SETUP = """Once, by whoever ships the app (about 10 minutes, free). Everyone else just clicks "Sign in with Google".
+ 1. console.cloud.google.com -> create a project named like the app (users see this name when they sign in).
+ 2. APIs & Services -> Library -> enable "Google Calendar API".
+ 3. APIs & Services -> OAuth consent screen -> External. Set the app name, a logo, your support e-mail, and add
+    the scope .../auth/calendar.events.
+ 4. Credentials -> Create credentials -> OAuth client ID -> "Desktop app". Copy the client ID and secret.
+ 5. Copy google_client.example.json to google_client.json next to the program and paste both values in.
+ 6. On the consent screen choose "Publish app" (In production). Until you do, Google expires every sign-in
+    after 7 days. Unverified apps show a "Google hasn't verified this app" page that users click through
+    (Advanced -> Go to ... (unsafe)); full verification (website, privacy policy, video) removes it."""
 
 GUIDE = """One-time setup in Google Cloud (about 10 minutes, free):
  1. console.cloud.google.com -> create a project (any name).
@@ -139,11 +155,43 @@ def sign_in(client_id, client_secret, open_url=webbrowser.open, timeout=120, can
     return tokens
 
 
-def save_connection(client_id, client_secret, refresh_token, access_token=None, expires_in=0):
-    """Remember a finished sign-in. The vault must be unlocked (or just created)."""
-    vault.put(SECRET_CLIENT, client_secret)
+def bundled_client():
+    """(client_id, client_secret) shipped with the app in google_client.json, or None.
+
+    This is the "Sign in with Google" most people use: the developer creates ONE Google OAuth client and
+    ships it, so users never touch Google Cloud. Google treats an installed app's client secret as
+    non-confidential (the sign-in is protected by PKCE instead). A placeholder file does not count."""
+    try:
+        data = json.loads(CLIENT_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    client_id, secret = str(data.get("client_id", "")).strip(), str(data.get("client_secret", "")).strip()
+    real = re.match(r"^\d{6,}-[\w-]+\.apps\.googleusercontent\.com$", client_id) and secret and not secret.upper().startswith("PASTE")
+    return (client_id, secret) if real else None
+
+
+def using_own_client():
+    """True when the user chose their own Google project (or this build ships no client of its own)."""
+    return bool(settings.load()["google"].get("own_client")) or bundled_client() is None
+
+
+def client_credentials():
+    """(client_id, client_secret) for sign-in and token renewal. Own-project secrets come from the vault."""
+    g = settings.load()["google"]
+    if not using_own_client():
+        return bundled_client()
+    return g.get("client_id"), vault.get(SECRET_CLIENT)
+
+
+def save_connection(client_id, client_secret, refresh_token, access_token=None, expires_in=0, own_client=False):
+    """Remember a finished sign-in. The vault must be unlocked (or just created). The shared client's
+    secret is not stored per user; an own-project secret is, encrypted."""
     vault.put(SECRET_REFRESH, refresh_token)
-    settings.update({"google": {"client_id": client_id}})
+    if own_client:
+        vault.put(SECRET_CLIENT, client_secret)
+    else:
+        vault.delete(SECRET_CLIENT)
+    settings.update({"google": {"client_id": client_id, "own_client": bool(own_client)}})
     if access_token:
         _token.update(value=access_token, expires=time.monotonic() + max(int(expires_in) - 60, 0))
 
@@ -151,8 +199,8 @@ def save_connection(client_id, client_secret, refresh_token, access_token=None, 
 def _access_token():
     if _token["value"] and time.monotonic() < _token["expires"]:
         return _token["value"]
-    client_id = settings.load()["google"].get("client_id")
-    refresh, secret = vault.get(SECRET_REFRESH), vault.get(SECRET_CLIENT)      # raises vault.Locked until unlocked
+    refresh = vault.get(SECRET_REFRESH)                                        # raises vault.Locked until unlocked
+    client_id, secret = client_credentials()
     if not (client_id and refresh and secret):
         raise GoogleError("Google is not signed in. Open Settings -> Accounts -> Google.")
     response = _http.post(TOKEN_URL, data={"client_id": client_id, "client_secret": secret, "refresh_token": refresh,

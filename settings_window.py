@@ -12,6 +12,7 @@ import os
 import queue
 import threading
 import tkinter as tk
+import webbrowser
 from tkinter import ttk
 
 import calendars
@@ -289,40 +290,39 @@ class SettingsWindow:
 
         self._heading(page, 7, "Google Calendar")
         self.google_state = self._status(page, 8)
-        tk.Label(page, text="Events open in your browser and you press Save there. No sign-in, and nothing is stored.",
-                 bg=CARD, fg=DIM, font=(theme.FONT, 10), justify="left", anchor="w", wraplength=self.px(560)).grid(
-            row=9, column=0, columnspan=3, sticky="w")
-        self.g_use_btn = self._button(page, "Use Google Calendar", self.google_use_link, primary=True)
-        self.g_off_btn = self._button(page, "Disconnect", lambda: self.confirm_twice(
-            "google", self.g_off_btn, "Disconnect", self.google_disconnect))
-        self._row(page, 10, self.g_use_btn, self.g_off_btn)
-        self.google_msg = self._status(page, 11)
-
-        # Advanced: automatic adding through the user's own Google project (a real sign-in)
         self.g_id_var, self.g_secret_var, self.g_cal_var = tk.StringVar(), tk.StringVar(), tk.StringVar()
         self.g_own_var = tk.BooleanVar()                          # True: sign in with the user's own Google project
         self.g_own_touched = False
         self.g_adv_open, self.g_adv_touched = False, False
+        self.g_cal = self._combo(page, 9, "Calendar", self.g_cal_var)
+        self.g_signin_btn = self._button(page, "Sign in with Google", self.google_sign_in, primary=True)
+        self.g_save_btn = self._button(page, "Save calendar", self.google_save_calendar)
+        self.g_off_btn = self._button(page, "Disconnect", lambda: self.confirm_twice(
+            "google", self.g_off_btn, "Disconnect", self.google_disconnect))
+        self._row(page, 10, self.g_signin_btn, self.g_save_btn, self.g_off_btn)
+        self.google_msg = self._status(page, 11)
+
         self.g_adv_btn = tk.Button(page, text="", command=self.toggle_advanced, bg=CARD, fg=DIM, activebackground=CARD,
                                    activeforeground=FG, relief="flat", bd=0, font=(theme.FONT, 10), cursor="hand2", anchor="w")
         self.g_adv_btn.grid(row=12, column=0, columnspan=3, sticky="w", pady=(self.px(10), 0))
         self.g_adv = tk.Frame(page, bg=CARD)
         self.g_adv.grid(row=13, column=0, columnspan=3, sticky="ew")
         self.g_adv.columnconfigure(1, weight=1)
-        self.g_cal = self._combo(self.g_adv, 0, "Calendar", self.g_cal_var)
-        self.g_signin_btn = self._button(self.g_adv, "Sign in with Google", self.google_sign_in)
-        self.g_save_btn = self._button(self.g_adv, "Save calendar", self.google_save_calendar)
-        self._row(self.g_adv, 1, self.g_signin_btn, self.g_save_btn)
         self.g_own_btn = tk.Button(self.g_adv, text="", command=self.toggle_own, bg=CARD, fg=DIM, activebackground=CARD, activeforeground=FG,
                                    relief="flat", bd=0, font=(theme.FONT, 10), cursor="hand2", anchor="w")
-        self.g_own_btn.grid(row=2, column=0, columnspan=3, sticky="w", pady=(self.px(8), 0))
+        self.g_own_btn.grid(row=0, column=0, columnspan=3, sticky="w")
         self.g_fields = tk.Frame(self.g_adv, bg=CARD)
-        self.g_fields.grid(row=3, column=0, columnspan=3, sticky="ew")
+        self.g_fields.grid(row=1, column=0, columnspan=3, sticky="ew")
         self.g_fields.columnconfigure(1, weight=1)
         self._field(self.g_fields, 0, "Client ID", self.g_id_var)
         self._field(self.g_fields, 1, "Client secret", self.g_secret_var, show="\u2022")
         self.g_guide_btn = self._button(self.g_fields, "Setup guide", self.show_guide)
         self.g_guide_btn.grid(row=2, column=0, columnspan=2, sticky="w", pady=(self.px(8), 0))
+        tk.Label(self.g_adv, text="Or skip signing in: each new event opens in your browser and you press Save there (one extra click per event).",
+                 bg=CARD, fg=DIM, font=(theme.FONT, 10), justify="left", anchor="w", wraplength=self.px(560)).grid(
+            row=2, column=0, columnspan=3, sticky="w", pady=(self.px(14), 0))
+        self.g_use_btn = self._button(self.g_adv, "Open events in my browser", self.google_use_link)
+        self.g_use_btn.grid(row=3, column=0, columnspan=3, sticky="w", pady=(self.px(6), 0))
 
     def toggle_advanced(self):
         self.g_adv_touched = True
@@ -334,8 +334,7 @@ class SettingsWindow:
             self.g_adv.grid()
         else:
             self.g_adv.grid_remove()
-        self.g_adv_btn.config(text="\u25be  Advanced: add events automatically (needs your own Google project)" if self.g_adv_open
-                              else "\u25b8  Advanced: add events automatically (needs your own Google project)")
+        self.g_adv_btn.config(text=("\u25be" if self.g_adv_open else "\u25b8") + "  Advanced options")
 
     def toggle_own(self):
         self.g_own_touched = True
@@ -354,7 +353,7 @@ class SettingsWindow:
         if has_builtin:
             self.g_own_btn.config(text="\u25be  Use the built-in sign-in instead" if own else "\u25b8  Use my own Google project")
         else:
-            self.g_own_btn.config(text="This copy has no built-in Google sign-in, so use your own Google project (see Setup guide).")
+            self.g_own_btn.config(text="This copy has no built-in Google sign-in. Use your own Google project (Setup guide), or open events in your browser.")
 
     def google_use_link(self):
         settings.update({"google": {"mode": "link"}})
@@ -424,12 +423,62 @@ class SettingsWindow:
         self.reload()
 
     def show_guide(self):
+        """A designed, scrollable checklist of the Google setup steps (google_cal.GUIDE_STEPS)."""
         import google_cal
         box = tk.Toplevel(self.top)
+        self.guide_box = box
         box.title("Google setup guide")
-        box.configure(bg=BG, padx=22, pady=18)
-        tk.Label(box, text=google_cal.GUIDE, bg=BG, fg=FG, font=(theme.FONT, 10), justify="left", wraplength=self.px(560)).pack(anchor="w")
-        tk.Button(box, text="Close", command=box.destroy, bg=FIELD, fg=FG, relief="flat", bd=0, padx=16, pady=5).pack(anchor="e", pady=(12, 0))
+        box.configure(bg=BG)
+        width = self.px(700)
+        box.geometry("%dx%d" % (width, min(self.px(780), int(box.winfo_screenheight() * 0.9))))
+        box.minsize(self.px(520), self.px(420))
+        box.bind("<Escape>", lambda e: box.destroy())
+        try:
+            box.update_idletasks()
+            hwnd = ctypes.windll.user32.GetParent(box.winfo_id())
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(ctypes.c_int(1)), 4)
+        except Exception:  # noqa: BLE001 - cosmetic only
+            pass
+
+        head = tk.Frame(box, bg=BG)
+        head.pack(fill="x", padx=self.px(28), pady=(self.px(22), self.px(8)))
+        tk.Label(head, text="Set up Google sign-in", bg=BG, fg=FG, font=(theme.FONT, 20, "bold")).pack(anchor="w")
+        tk.Label(head, text=google_cal.GUIDE_TIME, bg=BG, fg=ACCENT, font=(theme.FONT, 11)).pack(anchor="w", pady=(self.px(4), 0))
+        tk.Label(head, text="Only the person who ships the app does this, once. Everyone else just presses \u201cSign in with Google\u201d.",
+                 bg=BG, fg=DIM, font=(theme.FONT, 10), wraplength=width - self.px(90), justify="left").pack(anchor="w", pady=(self.px(6), 0))
+
+        foot = tk.Frame(box, bg=BG)
+        foot.pack(side="bottom", fill="x", padx=self.px(28), pady=self.px(14))
+        tk.Button(foot, text="Close", command=box.destroy, bg=FIELD, fg=FG, relief="flat", bd=0, padx=self.px(20), pady=self.px(6),
+                  font=(theme.FONT, 10), cursor="hand2").pack(side="right")
+
+        canvas = tk.Canvas(box, bg=BG, highlightthickness=0)
+        canvas.pack(side="top", fill="both", expand=True, padx=(self.px(28), self.px(12)))
+        body = tk.Frame(canvas, bg=BG)
+        window = canvas.create_window((0, 0), window=body, anchor="nw")
+        body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(window, width=e.width))
+        box.bind("<MouseWheel>", lambda e: canvas.yview_scroll(-1 * (e.delta // 120), "units"))
+
+        self.guide_open_buttons = []
+        for number, (title, detail, url) in enumerate(google_cal.GUIDE_STEPS, 1):
+            card = tk.Frame(body, bg=CARD)
+            card.pack(fill="x", pady=(0, self.px(10)))
+            tk.Frame(card, bg=ACCENT, width=self.px(4)).pack(side="left", fill="y")
+            badge = tk.Label(card, text=str(number), bg=ACCENT, fg=BG, font=(theme.FONT, 13, "bold"), width=2)
+            badge.pack(side="left", anchor="n", padx=(self.px(16), self.px(14)), pady=self.px(16), ipady=self.px(3))
+            text = tk.Frame(card, bg=CARD)
+            text.pack(side="left", fill="x", expand=True, pady=self.px(14), padx=(0, self.px(16)))
+            tk.Label(text, text=title, bg=CARD, fg=FG, font=(theme.FONT, 13, "bold"), anchor="w").pack(fill="x")
+            tk.Label(text, text=detail, bg=CARD, fg=DIM, font=(theme.FONT, 10), justify="left", anchor="w",
+                     wraplength=width - self.px(190)).pack(fill="x", pady=(self.px(4), 0))
+            if url:
+                button = tk.Button(text, text="Open this page \u2197", command=lambda u=url: webbrowser.open(u), bg=FIELD, fg=ACCENT,
+                                   activebackground=FIELD, activeforeground=FG, relief="flat", bd=0, padx=self.px(12), pady=self.px(4),
+                                   font=(theme.FONT, 10), cursor="hand2")
+                button.pack(anchor="w", pady=(self.px(8), 0))
+                self.guide_open_buttons.append((url, button))
+        return box
 
     def google_sign_in(self):
         import google_cal
@@ -645,24 +694,28 @@ class SettingsWindow:
             self.say(self.apple_state, "Not connected. Use an app-specific password from appleid.apple.com.", "info")
             self.apple_cal_var.set("")
         # Google
+        import google_cal
         g = cfg["google"]
         mode = settings.google_mode(cfg)
+        has_builtin = google_cal.bundled_client() is not None
         if mode == "link":
-            self.say(self.google_state, "Connected: new events open in your browser (no sign-in).", "ok")
+            self.say(self.google_state, "Connected: new events open in your browser (one extra click per event).", "ok")
         elif settings.google_configured(cfg):
-            self.say(self.google_state, "Connected: %s (automatic)" % (g.get("calendar_name") or g["calendar_id"]), "ok")
+            self.say(self.google_state, "Connected: %s" % (g.get("calendar_name") or g["calendar_id"]), "ok")
             self.g_cal.config(values=[g.get("calendar_name") or g["calendar_id"]])
             self.g_cal_var.set(g.get("calendar_name") or g["calendar_id"])
         elif g.get("client_id"):
             self.say(self.google_state, "Signed in, but no calendar chosen yet.", "warn")
+        elif has_builtin:
+            self.say(self.google_state, "Not connected. Press \u201cSign in with Google\u201d.", "info")
         else:
-            self.say(self.google_state, "Not connected. Press \u201cUse Google Calendar\u201d.", "info")
+            self.say(self.google_state, "Not connected. This copy has no built-in Google sign-in: open Advanced options.", "warn")
         if g.get("own_client") and g.get("client_id"):
             self.g_id_var.set(g["client_id"])
         if not self.g_own_touched:
             self.g_own_var.set(bool(g.get("own_client")))
         if not self.g_adv_touched:
-            self.g_adv_open = mode == "api" or bool(g.get("client_id"))
+            self.g_adv_open = mode == "api" and bool(g.get("own_client")) or not has_builtin
         self._apply_own_mode()
         self._apply_advanced()
         # Defaults

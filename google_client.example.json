@@ -1,5 +1,5 @@
 {
   "client_id": "PASTE-THE-CLIENT-ID.apps.googleusercontent.com",
   "client_secret": "PASTE-THE-CLIENT-SECRET",
-  "_help": "Copy this file to google_client.json and fill it in. See DEVELOPER_SETUP in google_cal.py (one-time, you only do this once for all users)."
+  "_help": "Copy this file to google_client.json and fill it in. Steps: README.md, section 'Ship Google sign-in', or Settings > Accounts > Google > Setup guide."
 }

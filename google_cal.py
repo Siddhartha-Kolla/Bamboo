@@ -40,27 +40,36 @@ SECRET_CLIENT = "google_client_secret"
 SECRET_REFRESH = "google_refresh_token"
 TIMEOUT = 20
 
-DEVELOPER_SETUP = """Once, by whoever ships the app (about 10 minutes, free). Everyone else just clicks "Sign in with Google".
- 1. console.cloud.google.com -> create a project named like the app (users see this name when they sign in).
- 2. APIs & Services -> Library -> enable "Google Calendar API".
- 3. APIs & Services -> OAuth consent screen -> External. Set the app name, a logo, your support e-mail, and add
-    the scope .../auth/calendar.events.
- 4. Credentials -> Create credentials -> OAuth client ID -> "Desktop app". Copy the client ID and secret.
- 5. Copy google_client.example.json to google_client.json next to the program and paste both values in.
- 6. On the consent screen choose "Publish app" (In production). Until you do, Google expires every sign-in
-    after 7 days. Unverified apps show a "Google hasn't verified this app" page that users click through
-    (Advanced -> Go to ... (unsafe)); full verification (website, privacy policy, video) removes it."""
-
-GUIDE = """One-time setup in Google Cloud (about 10 minutes, free):
- 1. console.cloud.google.com -> create a project (any name).
- 2. APIs & Services -> Library -> enable "Google Calendar API".
- 3. APIs & Services -> OAuth consent screen -> External. Fill the app name and your e-mail. Add the
-    scope .../auth/calendar.events. Add your own Google account as a test user.
- 4. Credentials -> Create credentials -> OAuth client ID -> application type "Desktop app".
- 5. Copy the client ID and client secret into quick-add (Settings -> Accounts -> Google), then Sign in.
- 6. IMPORTANT: back on the consent screen, choose "Publish app" (In production). While the app stays in
-    "Testing", Google expires the sign-in after 7 days. For your own use, the "unverified app" warning
-    at sign-in can be accepted."""
+# One place for the setup steps: the settings window draws them as cards and README.md repeats them.
+# (title, what to do, page to open or None). The Console links open the matching Google Cloud page.
+GUIDE_TIME = "About 10 minutes  \u00b7  free  \u00b7  done once"
+GUIDE_STEPS = [
+    ("Create a project",
+     "Sign in to Google Cloud Console with the Google account that should own the app, then create a new project. "
+     "Name it like your app: people see this name when they sign in.",
+     "https://console.cloud.google.com/projectcreate"),
+    ("Turn on the Calendar API",
+     "In your project open APIs & Services \u2192 Library, search for \u201cGoogle Calendar API\u201d and press Enable.",
+     "https://console.cloud.google.com/apis/library/calendar-json.googleapis.com"),
+    ("Set up the consent screen",
+     "APIs & Services \u2192 OAuth consent screen. Choose External, enter the app name, a logo and your support e-mail, "
+     "and add the permission  .../auth/calendar.events. While testing, add your own Google account as a test user.",
+     "https://console.cloud.google.com/apis/credentials/consent"),
+    ("Create the sign-in client",
+     "Credentials \u2192 Create credentials \u2192 OAuth client ID \u2192 application type \u201cDesktop app\u201d. "
+     "Copy the client ID and the client secret.",
+     "https://console.cloud.google.com/apis/credentials"),
+    ("Give it to the app",
+     "Shipping the app to others: copy google_client.example.json to google_client.json and paste both values in. "
+     "Using it only yourself: paste them into the two boxes in Settings \u2192 Accounts \u2192 Google \u2192 Advanced.",
+     None),
+    ("Publish the app",
+     "Back on the consent screen press \u201cPublish app\u201d (In production). While it stays in Testing, Google ends every "
+     "sign-in after 7 days. People then see a one-time \u201cGoogle hasn\u2019t verified this app\u201d page: Advanced \u2192 Go to your app. "
+     "Full verification (a website, a privacy policy, a short demo video) removes that page.",
+     "https://console.cloud.google.com/apis/credentials/consent"),
+]
+DEVELOPER_SETUP = "See GUIDE_STEPS in google_cal.py, the Setup guide in the settings window, or README.md."
 
 _http = requests                                   # tests swap this for a fake
 _token = {"value": None, "expires": 0.0}

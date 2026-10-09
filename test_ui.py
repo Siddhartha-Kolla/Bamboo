@@ -383,6 +383,20 @@ def run_settings_flow(tmp):
     check("Apple is disconnected and its password removed", not settings.apple_configured() and vault.names() == [])
     check("the window shows both as not connected again", "Not connected" in w.apple_state.cget("text") and "Not connected" in w.google_state.cget("text"))
 
+    # --- the designed setup guide
+    import google_cal
+    visited = []
+    sw.webbrowser.open = lambda url: visited.append(url) or True
+    box = w.show_guide()
+    pump(p, 0.4)
+    steps = google_cal.GUIDE_STEPS
+    check("the guide opens as its own window", box.winfo_exists() and box.winfo_viewable())
+    check("every step with a page gets an 'Open this page' button", len(w.guide_open_buttons) == sum(1 for _, _, u in steps if u)
+          and [u for u, _ in w.guide_open_buttons] == [u for _, _, u in steps if u], len(w.guide_open_buttons))
+    check("all guide links point at Google Cloud Console", all(u.startswith("https://console.cloud.google.com/") for u, _ in w.guide_open_buttons))
+    w.guide_open_buttons[1][1].invoke()
+    check("pressing a button opens that page in the browser", visited == [steps[1][2]], visited)
+    box.destroy()
     w.close()
     check("closing destroys the window and a new one can be opened", not w.alive() and sw._open["win"] is None and sw.open_window(p) is not w)
     sw._open["win"].close()
@@ -413,7 +427,7 @@ def run_shipped_client_flow(tmp):
     check("with a shipped client the client ID/secret fields are hidden", w.g_adv.winfo_ismapped() and not w.g_fields.winfo_ismapped(),
           (w.g_adv.winfo_ismapped(), w.g_fields.winfo_ismapped()))
     check("the advanced switch is offered", "own Google project" in w.g_own_btn.cget("text"), w.g_own_btn.cget("text"))
-    check("the status invites a single click", "Use Google Calendar" in w.google_state.cget("text"), w.google_state.cget("text"))
+    check("the status invites a single click", "Sign in with Google" in w.google_state.cget("text"), w.google_state.cget("text"))
 
     w.google_sign_in()                                           # nothing typed anywhere
     pump(p, 0.8)
@@ -506,7 +520,8 @@ def run_google_link_flow(tmp):
     w = sw.open_window(p)
     pump(p, 0.3)
     check("before enabling, Google shows as not connected", "Not connected" in w.google_state.cget("text") and not settings.google_configured())
-    check("the advanced section is collapsed", not w.g_adv.winfo_ismapped())
+    check("with no client shipped the advanced options are open, including the browser option",
+          w.g_adv.winfo_ismapped() and w.g_use_btn.winfo_ismapped())
     w.google_use_link()
     check("'Use Google Calendar' enables the browser link",
           settings.google_mode() == "link" and settings.google_configured() and "browser" in w.google_state.cget("text"), settings.load()["google"])
@@ -516,9 +531,7 @@ def run_google_link_flow(tmp):
     pump(p, 0.3)
     check("Disconnect clears it with no passphrase", not settings.google_configured() and settings.load()["google"] == {}
           and "Not connected" in w.google_state.cget("text"), settings.load()["google"])
-    w.toggle_advanced()
-    pump(p, 0.3)
-    check("the advanced switch opens the own-project section", w.g_adv.winfo_ismapped() and w.g_signin_btn.winfo_ismapped())
+    check("the own-project fields and sign-in are still available", w.g_fields.winfo_ismapped() and w.g_signin_btn.winfo_ismapped())
     w.close()
     p.root.destroy()
 

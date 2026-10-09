@@ -1,127 +1,45 @@
 """Add events to Apple Calendar (iCloud) over CalDAV. Works from Windows; no Apple device needed.
 
-The app-specific password is kept ENCRYPTED with a passphrase only you know (scrypt + Fernet), in
-~/.quickadd.vault. The popup asks for the passphrase once, keeps the password in memory for
-UNLOCK_IDLE_SECONDS after the last use, then forgets it and asks again.
+The app-specific password lives in the passphrase vault (vault.py, ~/.quickadd.vault) and the Apple ID
+and calendar name in ~/.quickadd.json (settings.py). The popup asks for the passphrase once, then keeps
+the password in memory for a while (see vault.UNLOCK_IDLE_SECONDS).
 
-    python icloud.py setup       # new setup: Apple ID, app-specific password, passphrase
-    python icloud.py protect     # move an existing Credential Manager password into the vault
+    python icloud.py setup       # Apple ID, app-specific password, passphrase
+    python icloud.py protect     # move an old Credential Manager password into the vault
     python icloud.py status
-    python icloud.py forget      # delete the vault, any stored password and the settings
+    python icloud.py forget      # remove Apple Calendar (add --all to wipe the vault and settings too)
 
 Create the app-specific password at appleid.apple.com -> Sign-In and Security -> App-Specific
-Passwords; revoke it there any time. Only the Apple ID and calendar name sit in plain text, in
-~/.quickadd.json. `setup --keyring` keeps the old behaviour (Windows Credential Manager, no passphrase).
+Passwords; revoke it there any time. `setup --keyring` keeps the old behaviour (Windows Credential
+Manager, no passphrase).
 """
-import base64
 import getpass
-import hashlib
-import json
-import os
 import sys
-import time
-from pathlib import Path
 
-CONFIG = Path.home() / ".quickadd.json"
-VAULT = Path.home() / ".quickadd.vault"
+import settings
+import vault
+from vault import Locked, has_vault, is_unlocked, lock, needs_unlock, unlock  # noqa: F401 - re-exported
+
 SERVICE = "quickadd-icloud"
 URL = "https://caldav.icloud.com"
+SECRET = "apple_password"
 
-UNLOCK_IDLE_SECONDS = 30 * 60      # forget the password after this long without a save
-MIN_PASSPHRASE = 8
-SCRYPT = {"n": 2 ** 15, "r": 8, "p": 1}   # ~32 MB and ~0.1 s per guess for anyone trying to crack the vault
-
-_unlocked = {"password": None, "until": 0.0}
-
-
-class Locked(RuntimeError):
-    """The password is in the vault and the passphrase has not been entered (or has expired)."""
-
-
-# ------------------------------------------------------------------ vault (passphrase encryption)
-
-def _key(passphrase, salt, n, r, p):
-    raw = hashlib.scrypt(passphrase.encode("utf-8"), salt=salt, n=n, r=r, p=p, dklen=32, maxmem=256 * 1024 * 1024)
-    return base64.urlsafe_b64encode(raw)
-
-
-def has_vault(path=None):
-    return Path(path or VAULT).exists()
-
-
-def encrypt_secret(secret, passphrase, path=None):
-    from cryptography.fernet import Fernet
-    path = path or VAULT
-    salt = os.urandom(16)
-    token = Fernet(_key(passphrase, salt, **SCRYPT)).encrypt(secret.encode("utf-8"))
-    blob = {"v": 1, "kdf": "scrypt", **SCRYPT, "salt": base64.b64encode(salt).decode(), "token": token.decode()}
-    tmp = Path(str(path) + ".tmp")
-    tmp.write_text(json.dumps(blob), encoding="utf-8")
-    os.replace(tmp, path)
-
-
-def decrypt_secret(passphrase, path=None):
-    """The stored secret, or ValueError when the passphrase is wrong or the file was altered."""
-    from cryptography.fernet import Fernet, InvalidToken
-    try:
-        blob = json.loads(Path(path or VAULT).read_text(encoding="utf-8"))
-        key = _key(passphrase, base64.b64decode(blob["salt"]), blob["n"], blob["r"], blob["p"])
-        return Fernet(key).decrypt(blob["token"].encode()).decode("utf-8")
-    except (InvalidToken, KeyError, ValueError, TypeError, OSError) as err:
-        raise ValueError("wrong passphrase, or the vault file is damaged") from err
-
-
-def is_unlocked():
-    return _unlocked["password"] is not None and time.monotonic() < _unlocked["until"]
-
-
-def needs_unlock():
-    return has_vault() and not is_unlocked()
-
-
-def unlock(passphrase):
-    """True and the password is held in memory for UNLOCK_IDLE_SECONDS; False for a wrong passphrase."""
-    try:
-        password = decrypt_secret(passphrase)
-    except ValueError:
-        return False
-    _unlocked["password"] = password
-    _unlocked["until"] = time.monotonic() + UNLOCK_IDLE_SECONDS
-    return True
-
-
-def lock():
-    _unlocked["password"] = None
-    _unlocked["until"] = 0.0
+load_config = settings.load
+is_configured = settings.apple_configured
 
 
 def _password(cfg):
-    if is_unlocked():
-        _unlocked["until"] = time.monotonic() + UNLOCK_IDLE_SECONDS     # in use: keep it a while longer
-        return _unlocked["password"]
-    lock()                                                             # expired: drop the reference
-    if has_vault():
-        raise Locked("iCloud is locked: enter your passphrase")
-    import keyring
-    password = keyring.get_password(SERVICE, cfg["apple_id"])
+    if vault.has_vault():
+        password = vault.get(SECRET)                     # raises Locked until the passphrase is entered
+    else:
+        import keyring
+        password = keyring.get_password(SERVICE, cfg["apple_id"])
     if not password:
         raise RuntimeError("no stored iCloud password (run: python icloud.py setup)")
     return password
 
 
 # ------------------------------------------------------------------ CalDAV
-
-def load_config():
-    try:
-        return json.loads(CONFIG.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-
-
-def is_configured():
-    cfg = load_config()
-    return bool(cfg and cfg.get("apple_id") and cfg.get("calendar"))
-
 
 def _client(apple_id, password):
     import caldav  # imported lazily: keeps the idle popup small
@@ -140,12 +58,17 @@ def _writable_calendars(client):
     return out
 
 
+def list_calendars(apple_id, password):
+    """Names of the event calendars on this account (raises on a bad login)."""
+    return [c.name or "(unnamed)" for c in _writable_calendars(_client(apple_id, password))]
+
+
 def add_event(ics_text):
     """Save one event (iCalendar text) to the configured calendar. Returns the calendar name.
     Raises Locked when the passphrase is needed, RuntimeError with a readable message otherwise."""
-    cfg = load_config()
-    if not cfg:
-        raise RuntimeError("iCloud is not set up (run: python icloud.py setup)")
+    cfg = settings.load()
+    if not settings.apple_configured(cfg):
+        raise RuntimeError("Apple Calendar is not set up")
     password = _password(cfg)
     try:
         client = _client(cfg["apple_id"], password)
@@ -160,10 +83,10 @@ def add_event(ics_text):
 
 # ------------------------------------------------------------------ command line
 
-def _ask_passphrase():
+def _ask_new_passphrase():
     while True:
-        first = getpass.getpass("Choose a passphrase (%d+ characters, only you know it): " % MIN_PASSPHRASE)
-        if len(first) < MIN_PASSPHRASE:
+        first = getpass.getpass("Choose a passphrase (%d+ characters, only you know it): " % vault.MIN_PASSPHRASE)
+        if len(first) < vault.MIN_PASSPHRASE:
             print("Too short.")
             continue
         if getpass.getpass("Repeat it: ") != first:
@@ -172,16 +95,25 @@ def _ask_passphrase():
         return first
 
 
+def _store_password(password):
+    """Put the Apple password in the vault, creating it or unlocking the existing one."""
+    if not vault.has_vault():
+        vault.create(_ask_new_passphrase(), {SECRET: password})
+        return
+    if not vault.is_unlocked() and not vault.unlock(getpass.getpass("Your existing vault passphrase: ")):
+        raise SystemExit("Wrong passphrase, nothing was changed.")
+    vault.put(SECRET, password)
+
+
 def setup(use_keyring=False):
     apple_id = input("Apple ID (email): ").strip()
     password = getpass.getpass("App-specific password (hidden): ").strip()
     print("Connecting to iCloud ...")
     try:
-        calendars = _writable_calendars(_client(apple_id, password))
+        names = list_calendars(apple_id, password)
     except Exception as err:
         raise SystemExit("Could not connect: %s\nCheck the Apple ID and that this is an app-specific "
                          "password (xxxx-xxxx-xxxx-xxxx), not your normal one." % (str(err) or err.__class__.__name__))
-    names = [c.name or "(unnamed)" for c in calendars]
     if not names:
         raise SystemExit("Connected, but found no event calendars.")
     print("\nCalendars:")
@@ -194,45 +126,51 @@ def setup(use_keyring=False):
         import keyring
         keyring.set_password(SERVICE, apple_id, password)
     else:
-        encrypt_secret(password, _ask_passphrase())
-    CONFIG.write_text(json.dumps({"apple_id": apple_id, "calendar": names[int(pick) - 1]}, indent=2),
-                      encoding="utf-8")
-    print("\nSaved. Quick-add will now add events to %r." % names[int(pick) - 1])
+        _store_password(password)
+    settings.update({"apple_id": apple_id, "calendar": names[int(pick) - 1]})
+    print("\nSaved. Quick-add can now add events to %r." % names[int(pick) - 1])
 
 
 def protect():
     """Move a password that sits in Windows Credential Manager into the passphrase vault."""
     import keyring
-    cfg = load_config()
-    if not cfg:
+    cfg = settings.load()
+    if not settings.apple_configured(cfg):
         raise SystemExit("Nothing to protect: run setup first.")
     password = keyring.get_password(SERVICE, cfg["apple_id"])
     if not password:
         raise SystemExit("No password in Credential Manager for %s." % cfg["apple_id"])
-    encrypt_secret(password, _ask_passphrase())
-    if not unlock(getpass.getpass("Type the passphrase once more to check it: ")):
-        VAULT.unlink(missing_ok=True)
-        raise SystemExit("That did not match, so nothing was changed.")
+    _store_password(password)
     keyring.delete_password(SERVICE, cfg["apple_id"])
-    print("Done. The password is now encrypted in %s and removed from Credential Manager." % VAULT)
+    print("Done. The password is now encrypted in %s and removed from Credential Manager." % vault.VAULT)
 
 
-def forget():
-    cfg = load_config()
-    if cfg:
+def forget(everything=False):
+    cfg = settings.load()
+    if cfg.get("apple_id"):
         try:
             import keyring
             keyring.delete_password(SERVICE, cfg["apple_id"])
         except Exception:
             pass
-    VAULT.unlink(missing_ok=True)
-    CONFIG.unlink(missing_ok=True)
-    print("Removed the vault, any stored password and the settings.")
+    if everything:
+        vault.destroy()
+        settings.CONFIG.unlink(missing_ok=True)
+        print("Removed the vault and all settings.")
+        return
+    cfg.pop("apple_id", None)
+    cfg.pop("calendar", None)
+    settings.save(cfg)
+    if vault.has_vault() and (vault.is_unlocked() or vault.unlock(getpass.getpass("Vault passphrase (to remove the Apple password): "))):
+        vault.delete(SECRET)
+        if not vault.names():
+            vault.destroy()
+    print("Removed Apple Calendar.")
 
 
 def status():
-    cfg = load_config()
-    if not cfg:
+    cfg = settings.load()
+    if not settings.apple_configured(cfg):
         print("configured: no")
         return
     where = "passphrase vault" if has_vault() else "Windows Credential Manager (no passphrase)"
@@ -246,6 +184,6 @@ if __name__ == "__main__":
     elif cmd == "protect":
         protect()
     elif cmd == "forget":
-        forget()
+        forget(everything="--all" in sys.argv)
     else:
         status()

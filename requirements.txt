@@ -7,3 +7,4 @@ cryptography==50.0.2  # passphrase vault
 tzlocal==5.4.4        # find the PC's timezone
 pystray==0.19.5       # tray icon
 pillow==12.3.0        # draws the tray icon
+requests==2.34.2      # Google Calendar REST calls

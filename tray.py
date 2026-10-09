@@ -33,6 +33,7 @@ def start(events, hotkey_label, autostart_enabled, autostart_toggle):
 
     menu = pystray.Menu(
         pystray.MenuItem("Quick add  (%s)" % hotkey_label, put("tray-add"), default=True),
+        pystray.MenuItem("Settings…", put("tray-settings")),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Restart  (load code changes)", put("tray-restart")),
         pystray.MenuItem("Start with Windows", lambda icon, item: autostart_toggle(),

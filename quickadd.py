@@ -1,39 +1,40 @@
 """Quick-add calendar popup (Windows). Press the hotkey, type "dentist friday 3pm", Enter.
 
     pythonw quickadd.py        # no console window; python quickadd.py to see errors
+    qa start | stop | restart  # see quickadd_ctl.py
 
-Standard library only: tkinter for the window, RegisterHotKey (ctypes) for the global hotkey.
-The parser below is a PLACEHOLDER (day words + simple times). Replace `parse` with ctparse /
-GLiNER later; the UI only needs it to return a dict like the one documented there.
+Standard library for the window (tkinter) and the global hotkey (RegisterHotKey via ctypes). Parsing is
+eventparser.py, calendar files are eventout.py, calendars are calendars.py, secrets are vault.py.
 """
 import atexit
 import ctypes
 import datetime as dt
 import os
 import queue
-import re
 import subprocess
 import sys
 import threading
 import tkinter as tk
 import tkinter.font as tkfont
-import uuid
 from ctypes import wintypes
 from pathlib import Path
 
+import calendars
+import commands
+import eventparser
+import settings
 import singleton
-
-HOTKEY = ("ctrl+alt", "C")   # Ctrl+Alt+C
-OUT_DIR = Path.home() / "Documents" / "quickadd"
-
-BORDER, BG, CARD = "#2e3140", "#17181d", "#1f2129"
-FG, DIM, ACCENT, WARN, OK, ERR = "#eceef4", "#868b9b", "#7c9cff", "#f0b35a", "#5fd39a", "#ef6b6b"
-FONT = "Segoe UI"       # upgraded to "Segoe UI Variable Text" at startup when installed
-ICON_FONT = "Segoe MDL2 Assets"
-CALENDAR_GLYPH = ""
-
-
+import theme
+import vault
+from eventout import OUT_DIR, build_ics, write_ics                      # noqa: F401 - re-exported for scripts/tests
+from eventout import local_zone as _local_zone                           # noqa: F401
 from eventparser import parse   # ctparse is imported lazily inside, on the first keystroke
+
+from theme import ACCENT, BG, BORDER, CARD, DIM, ERR, FG, OK, WARN  # noqa: E402 - colours shared with the settings window
+
+FONT = theme.FONT       # upgraded to "Segoe UI Variable Text" at startup when installed
+ICON_FONT = "Segoe MDL2 Assets"
+CALENDAR_GLYPH = ""
 
 
 def _day(value):
@@ -77,87 +78,43 @@ def repeat_text(ev):
     return {"FREQ=DAILY": "Every day", "FREQ=WEEKLY": "Every week", "FREQ=MONTHLY": "Every month"}.get(rule, rule)
 
 
-def _local_zone():
-    """(IANA name, ZoneInfo) of the PC's timezone right now, or None if it cannot be worked out."""
+def save_event(ev, target, out):
+    """Worker thread: sends the event to `target`, falls back to a local .ics, reports on `out`."""
     try:
-        import tzlocal
-        from zoneinfo import ZoneInfo
-        name = tzlocal.get_localzone_name()
-        return name, ZoneInfo(name)
-    except Exception:  # noqa: BLE001 - any failure just means "fall back to UTC"
-        return None
-
-
-def _vtimezone(name, zone, ev):
-    """A VTIMEZONE block covering the event (and, for repeating events, many years after it)."""
-    import icalendar
-    last_year = ev["end"].year + (10 if ev.get("rrule") else 1)
-    vtz = icalendar.Timezone.from_tzinfo(zone, tzid=name, first_date=dt.date(ev["start"].year - 1, 1, 1),
-                                         last_date=dt.date(last_year, 12, 31))
-    return vtz.to_ical().decode("utf-8").strip().split("\r\n")
-
-
-def build_ics(ev):
-    """Timed events carry the PC's timezone (TZID + VTIMEZONE), so 9:30 is 9:30 where you are, and a
-    weekly event keeps its clock time across daylight saving. Without a timezone calendars guess
-    (Notion Calendar read the bare time as UTC and showed 9:30 as 11:30). If the zone cannot be
-    found the times are written in UTC instead, which is still the right moment."""
-    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    zone_lines = []
-    if ev["all_day"]:
-        # an all-day DTEND is exclusive, so the last day shown to the user is one day before it
-        when = "DTSTART;VALUE=DATE:%s\r\nDTEND;VALUE=DATE:%s" % (
-            ev["start"].strftime("%Y%m%d"), (ev["end"] + dt.timedelta(days=1)).strftime("%Y%m%d"))
-    else:
-        found = _local_zone()
-        fmt = "%Y%m%dT%H%M%S"
-        if found:
-            name, zone = found
-            zone_lines = _vtimezone(name, zone, ev)
-            when = "DTSTART;TZID=%s:%s\r\nDTEND;TZID=%s:%s" % (name, ev["start"].strftime(fmt), name, ev["end"].strftime(fmt))
-        else:
-            as_utc = lambda value: value.astimezone(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")  # noqa: E731 - naive = PC local time
-            when = "DTSTART:%s\r\nDTEND:%s" % (as_utc(ev["start"]), as_utc(ev["end"]))
-    title = ev["title"].replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
-    lines = (["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//quickadd//EN"] + zone_lines
-             + ["BEGIN:VEVENT", "UID:%s@quickadd" % uuid.uuid4(), "DTSTAMP:" + stamp, when, "SUMMARY:" + title])
-    if ev.get("rrule"):
-        lines.append("RRULE:" + ev["rrule"])
-    return "\r\n".join(lines + ["END:VEVENT", "END:VCALENDAR", ""])
-
-
-def write_ics(ev):
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    name = re.sub(r"[^\w\- ]", "", ev["title"])[:40].strip() or "event"
-    path = OUT_DIR / ("%s_%s.ics" % (dt.datetime.now().strftime("%Y%m%d-%H%M%S"), name))
-    path.write_text(build_ics(ev), encoding="utf-8", newline="")
-    return path
-
-
-def save_to_icloud(ev, out):
-    """Worker thread: sends the event to iCloud, falls back to a local .ics, reports on `out`."""
-    try:
-        import icloud
-        cal = icloud.add_event(build_ics(ev))
-        out.put(("saved", "Added to Apple Calendar", "%s  ·  %s" % (cal, ev["title"])))
+        cal = calendars.add_event(target, ev, build_ics(ev))
+        out.put(("saved", "Added to %s" % calendars.label(target), "%s  ·  %s" % (cal, ev["title"])))
     except Exception as err:  # noqa: BLE001 - any failure must still end in a saved file
         try:
             path = write_ics(ev)
-            out.put(("fallback", "iCloud failed, saved a file instead", "%s  (%s)" % (path.name, err)))
+            out.put(("fallback", "%s failed, saved a file instead" % calendars.label(target),
+                     "%s  (%s)" % (path.name, err)))
         except OSError as os_err:
             out.put(("error", "Could not save", str(os_err)))
 
 
+def apply_settings():
+    """Push the saved settings into the modules that read them. Cheap, so it runs on every show()."""
+    d = settings.load()["defaults"]
+    eventparser.DEFAULT_MINUTES = d["duration_min"]
+    vault.UNLOCK_IDLE_SECONDS = d["unlock_idle_min"] * 60
+
+
 # ---------------------------------------------------------------------------- hotkey (Win32)
+
+def hotkey_label(text=None):
+    mods, key = settings.parse_hotkey(text or settings.load()["defaults"]["hotkey"])
+    return "+".join([m.capitalize() for m in mods] + [key])
+
 
 def listen_for_hotkey(out):
     """Blocks in a message loop on its own thread; puts "hotkey" on `out` each press."""
-    mods = {"ctrl": 0x2, "alt": 0x1, "shift": 0x4, "win": 0x8}
+    mods, key = settings.parse_hotkey(settings.load()["defaults"]["hotkey"])
     flags = 0x4000  # MOD_NOREPEAT
-    for part in HOTKEY[0].split("+"):
-        flags |= mods[part]
+    for part in mods:
+        flags |= {"ctrl": 0x2, "alt": 0x1, "shift": 0x4, "win": 0x8}[part]
+    vk = 0x6F + int(key[1:]) if key.startswith("F") and len(key) > 1 else ord(key)
     user32 = ctypes.windll.user32
-    if not user32.RegisterHotKey(None, 1, flags, ord(HOTKEY[1])):
+    if not user32.RegisterHotKey(None, 1, flags, vk):
         out.put("hotkey-failed")
         return
     msg = wintypes.MSG()
@@ -186,15 +143,11 @@ class Popup:
         self.WIDTH, self.SIDE = self.px(self.BASE_WIDTH), self.px(self.BASE_SIDE)
         families = set(tkfont.families(r))
         if "Segoe UI Variable Text" in families:
-            FONT = "Segoe UI Variable Text"
+            FONT = theme.FONT = "Segoe UI Variable Text"
         has_icons = ICON_FONT in families
         self.busy = False
-        self.unlocking, self.pending, self.pending_text = False, None, ""
-        try:
-            import icloud
-            self.use_icloud = icloud.is_configured()   # cheap: reads a small JSON file only
-        except Exception:
-            self.use_icloud = False
+        self.unlocking, self.pending, self.pending_text, self.pending_target = False, None, "", None
+        apply_settings()
         r.overrideredirect(True)
         r.attributes("-topmost", True)
         r.configure(bg=BORDER)   # the 1px frame colour shows through around `outer`
@@ -227,7 +180,8 @@ class Popup:
         self.title_lbl.pack(fill="x")
         meta = tk.Frame(inner, bg=CARD)
         meta.pack(fill="x", pady=(self.px(6), 0))
-        self.date_lbl = tk.Label(meta, font=(FONT, 11), bg=CARD, fg=FG, anchor="w")
+        self.date_lbl = tk.Label(meta, font=(FONT, 11), bg=CARD, fg=FG, anchor="w", justify="left",
+                                 wraplength=self.WIDTH - 2 * self.SIDE - self.px(90))
         self.date_lbl.pack(side="left")
         self.time_lbl = tk.Label(meta, font=(FONT, 11), bg=CARD, fg=ACCENT, anchor="w")
         self.time_lbl.pack(side="left", padx=(self.px(18), 0))
@@ -237,14 +191,15 @@ class Popup:
         # footer with key caps
         foot = tk.Frame(outer, bg=BG)
         foot.pack(fill="x", padx=self.SIDE, pady=(self.px(10), self.px(18)))
-        tk.Label(foot, text="Apple Calendar" if self.use_icloud else "Saved to Documents\\quickadd",
-                 font=(FONT, 9), bg=BG, fg=DIM).pack(side="left")
+        self.foot_lbl = tk.Label(foot, text="", font=(FONT, 9), bg=BG, fg=DIM)
+        self.foot_lbl.pack(side="left")
         for key, label in (("Esc", "Close"), ("↵", "Add")):
             tk.Label(foot, text=label, font=(FONT, 9), bg=BG, fg=DIM).pack(side="right", padx=(self.px(8), 0))
             tk.Label(foot, text=key, font=(FONT, 9, "bold"), bg=CARD, fg=FG, padx=self.px(7), pady=self.px(1)).pack(side="right", padx=(self.px(14), 0))
 
         self.entry.bind("<Return>", self.on_enter)
         self.entry.bind("<Escape>", self.on_escape)
+        self.entry.bind("<Tab>", self.on_tab)
         self.var.trace_add("write", lambda *a: self.refresh())
         r.bind("<FocusOut>", self.on_focus_out)
 
@@ -255,7 +210,7 @@ class Popup:
             import tray
             from quickadd_ctl import autostart_enabled, set_autostart
             self.stop_event = singleton.create_stop_event()
-            self.tray = tray.start(self.events, "Ctrl+Alt+C", autostart_enabled,
+            self.tray = tray.start(self.events, hotkey_label(), autostart_enabled,
                                    lambda: set_autostart(not autostart_enabled()))
         r.after(150, self.poll)
 
@@ -276,6 +231,8 @@ class Popup:
                     return
                 elif item == "tray-restart":
                     self.restart()
+                elif item == "tray-settings":
+                    self.open_settings()
                 elif item == "hotkey-failed":
                     print("Could not register hotkey (already in use?).")
                 elif isinstance(item, tuple) and item[0] == "unlock":
@@ -294,8 +251,10 @@ class Popup:
 
     def show(self):
         r = self.root
+        apply_settings()
         self.leave_unlock_mode()
         self.var.set("")
+        self.update_footer()
         self.refresh()
         r.update_idletasks()
         w, h = self.WIDTH, r.winfo_reqheight()
@@ -330,29 +289,90 @@ class Popup:
         self.date_lbl.config(text=date)
         self.time_lbl.config(text=time, fg=time_fg)
         self.note_lbl.config(text=note, fg=note_fg)
+        self.fit()
+
+    def fit(self):
+        """Grow or shrink the window to its content, keeping its position (a card can change height)."""
+        if self.root.state() == "withdrawn":
+            return
+        self.root.update_idletasks()
+        height = self.root.winfo_reqheight()
+        if height != self.root.winfo_height():
+            self.root.geometry("%dx%d" % (self.WIDTH, height))
+
+    def update_footer(self, override=None):
+        target = calendars.choose_target(override=override)
+        self.foot_lbl.config(text=calendars.label(target) if target else "Saved to Documents\\quickadd")
 
     def refresh(self):
         if self.unlocking:
             return                                    # the entry holds a passphrase now, not an event
-        ev = parse(self.var.get())
+        text = self.var.get()
+        if commands.is_command(text):
+            title, detail = commands.suggestions(text)
+            self.set_card(ACCENT, title, FG, detail, "")
+            self.date_lbl.config(fg=DIM)
+            return
+        clean, override = commands.split_override(text)
+        self.update_footer(override)
+        ev = parse(clean)
         if ev is None:
             self.set_card(DIM, "Describe your event", DIM,
-                          "dentist friday 3pm   ·   lunch with Sam tomorrow 12:30", "")
+                          "dentist friday 3pm   ·   lunch with Sam tomorrow 12:30   ·   /help for commands", "")
             self.date_lbl.config(fg=DIM)
         else:
             self.date_lbl.config(fg=FG)
             parts = ([repeat_text(ev)] if ev["rrule"] else []) + ev["hints"]
+            if override:
+                chosen = calendars.choose_target(override=override)
+                parts.append("→ %s (this event only)" % calendars.label(chosen) if chosen == override
+                             else "%s is not set up, using %s" % (calendars.label(override), calendars.label(chosen) if chosen else "a file"))
             self.set_card(WARN if ev["all_day"] else ACCENT, ev["title"], FG,
                           date_text(ev), time_text(ev), WARN if ev["all_day"] else ACCENT,
-                          "  ·  ".join(parts), ACCENT if ev["rrule"] and not ev["hints"] else WARN)
+                          "  ·  ".join(parts), ACCENT if ev["rrule"] and not ev["hints"] and not override else WARN)
 
-    # ---- passphrase prompt: the iCloud password is encrypted on disk and unlocked on demand
+    # ---- slash commands
 
-    def enter_unlock_mode(self, ev, typed):
-        self.unlocking, self.pending, self.pending_text = True, ev, typed
+    def on_tab(self, _event):
+        text = self.var.get()
+        if commands.is_command(text) and not self.unlocking:
+            self.var.set(commands.complete(text))
+            self.entry.icursor("end")
+        return "break"                                 # keep Tab from moving focus out of the entry
+
+    def run_command(self, text):
+        result = commands.run(text)
+        color = {"ok": OK, "error": ERR, "info": ACCENT}[result.kind]
+        self.set_card(color, result.title, FG if result.kind == "info" else color, result.detail, "")
+        self.date_lbl.config(fg=DIM)
+        if result.action == "settings":
+            self.open_settings()
+        elif result.action == "log":
+            try:
+                os.startfile(LOG)
+            except OSError:
+                self.set_card(ERR, "No log yet", ERR, str(LOG), "")
+        elif result.action == "restart":
+            self.restart()
+        elif result.action == "quit":
+            self.root.after(300, self.quit)
+        if result.autohide and result.action not in ("quit",):
+            self.root.after(900, self.hide)
+
+    def open_settings(self):
+        try:
+            import settings_window
+            settings_window.open_window(self)
+        except ImportError:
+            self.set_card(ERR, "Settings window is not available", ERR, "settings_window.py is missing.", "")
+
+    # ---- passphrase prompt: secrets are encrypted on disk and unlocked on demand
+
+    def enter_unlock_mode(self, ev, typed, target):
+        self.unlocking, self.pending, self.pending_text, self.pending_target = True, ev, typed, target
         self.var.set("")
         self.entry.config(show="•")
-        self.set_card(WARN, "Unlock Apple Calendar", FG, "Type your passphrase and press Enter", "")
+        self.set_card(WARN, "Unlock %s" % calendars.label(target), FG, "Type your passphrase and press Enter", "")
         self.date_lbl.config(fg=DIM)
 
     def leave_unlock_mode(self):
@@ -372,8 +392,7 @@ class Popup:
         self.set_card(ACCENT, "Unlocking…", DIM, "", "")
 
         def work():
-            import icloud
-            self.events.put(("unlock", icloud.unlock(passphrase)))
+            self.events.put(("unlock", vault.unlock(passphrase)))
         threading.Thread(target=work, daemon=True).start()
 
     def on_unlock_result(self, ok):
@@ -382,15 +401,15 @@ class Popup:
             self.set_card(ERR, "Wrong passphrase", ERR, "Try again, or press Esc to go back", "")
             self.date_lbl.config(fg=DIM)
             return
-        ev = self.pending
+        ev, target = self.pending, self.pending_target
         self.leave_unlock_mode()
-        self.start_icloud_save(ev)
+        self.start_save(ev, target)
 
-    def start_icloud_save(self, ev):
+    def start_save(self, ev, target):
         self.busy = True
-        self.set_card(ACCENT, "Adding to Apple Calendar…", DIM, ev["title"], "")
+        self.set_card(ACCENT, "Adding to %s…" % calendars.label(target), DIM, ev["title"], "")
         self.date_lbl.config(fg=DIM)
-        threading.Thread(target=save_to_icloud, args=(ev, self.events), daemon=True).start()
+        threading.Thread(target=save_event, args=(ev, target, self.events), daemon=True).start()
 
     def on_escape(self, _event):
         if self.unlocking and not self.busy:
@@ -404,15 +423,20 @@ class Popup:
         if self.unlocking:
             self.check_passphrase()
             return
-        ev = parse(self.var.get())
+        text = self.var.get()
+        if commands.is_command(text):
+            self.run_command(text)
+            return
+        clean, override = commands.split_override(text)
+        ev = parse(clean)
         if ev is None:
             return
-        if self.use_icloud:
-            import icloud
-            if icloud.needs_unlock():
-                self.enter_unlock_mode(ev, self.var.get())
+        target = calendars.choose_target(override=override)
+        if target is not None:
+            if calendars.needs_unlock(target):
+                self.enter_unlock_mode(ev, text, target)
             else:
-                self.start_icloud_save(ev)
+                self.start_save(ev, target)
             return
         try:
             path = write_ics(ev)

@@ -1,3 +1,2 @@
 @echo off
-cd /d "%~dp0"
-start "" ".venv\Scripts\pythonw.exe" quickadd.py
+call "%~dp0qa.bat" start

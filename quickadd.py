@@ -6,16 +6,22 @@ Standard library only: tkinter for the window, RegisterHotKey (ctypes) for the g
 The parser below is a PLACEHOLDER (day words + simple times). Replace `parse` with ctparse /
 GLiNER later; the UI only needs it to return a dict like the one documented there.
 """
+import atexit
 import ctypes
 import datetime as dt
+import os
 import queue
 import re
+import subprocess
+import sys
 import threading
 import tkinter as tk
 import tkinter.font as tkfont
 import uuid
 from ctypes import wintypes
 from pathlib import Path
+
+import singleton
 
 HOTKEY = ("ctrl+alt", "C")   # Ctrl+Alt+C
 OUT_DIR = Path.home() / "Documents" / "quickadd"
@@ -71,17 +77,50 @@ def repeat_text(ev):
     return {"FREQ=DAILY": "Every day", "FREQ=WEEKLY": "Every week", "FREQ=MONTHLY": "Every month"}.get(rule, rule)
 
 
+def _local_zone():
+    """(IANA name, ZoneInfo) of the PC's timezone right now, or None if it cannot be worked out."""
+    try:
+        import tzlocal
+        from zoneinfo import ZoneInfo
+        name = tzlocal.get_localzone_name()
+        return name, ZoneInfo(name)
+    except Exception:  # noqa: BLE001 - any failure just means "fall back to UTC"
+        return None
+
+
+def _vtimezone(name, zone, ev):
+    """A VTIMEZONE block covering the event (and, for repeating events, many years after it)."""
+    import icalendar
+    last_year = ev["end"].year + (10 if ev.get("rrule") else 1)
+    vtz = icalendar.Timezone.from_tzinfo(zone, tzid=name, first_date=dt.date(ev["start"].year - 1, 1, 1),
+                                         last_date=dt.date(last_year, 12, 31))
+    return vtz.to_ical().decode("utf-8").strip().split("\r\n")
+
+
 def build_ics(ev):
+    """Timed events carry the PC's timezone (TZID + VTIMEZONE), so 9:30 is 9:30 where you are, and a
+    weekly event keeps its clock time across daylight saving. Without a timezone calendars guess
+    (Notion Calendar read the bare time as UTC and showed 9:30 as 11:30). If the zone cannot be
+    found the times are written in UTC instead, which is still the right moment."""
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    zone_lines = []
     if ev["all_day"]:
         # an all-day DTEND is exclusive, so the last day shown to the user is one day before it
         when = "DTSTART;VALUE=DATE:%s\r\nDTEND;VALUE=DATE:%s" % (
             ev["start"].strftime("%Y%m%d"), (ev["end"] + dt.timedelta(days=1)).strftime("%Y%m%d"))
     else:
-        when = "DTSTART:%s\r\nDTEND:%s" % (ev["start"].strftime("%Y%m%dT%H%M%S"), ev["end"].strftime("%Y%m%dT%H%M%S"))
+        found = _local_zone()
+        fmt = "%Y%m%dT%H%M%S"
+        if found:
+            name, zone = found
+            zone_lines = _vtimezone(name, zone, ev)
+            when = "DTSTART;TZID=%s:%s\r\nDTEND;TZID=%s:%s" % (name, ev["start"].strftime(fmt), name, ev["end"].strftime(fmt))
+        else:
+            as_utc = lambda value: value.astimezone(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")  # noqa: E731 - naive = PC local time
+            when = "DTSTART:%s\r\nDTEND:%s" % (as_utc(ev["start"]), as_utc(ev["end"]))
     title = ev["title"].replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
-    lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//quickadd//EN", "BEGIN:VEVENT",
-             "UID:%s@quickadd" % uuid.uuid4(), "DTSTAMP:" + stamp, when, "SUMMARY:" + title]
+    lines = (["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//quickadd//EN"] + zone_lines
+             + ["BEGIN:VEVENT", "UID:%s@quickadd" % uuid.uuid4(), "DTSTAMP:" + stamp, when, "SUMMARY:" + title])
     if ev.get("rrule"):
         lines.append("RRULE:" + ev["rrule"])
     return "\r\n".join(lines + ["END:VEVENT", "END:VCALENDAR", ""])
@@ -130,10 +169,12 @@ def listen_for_hotkey(out):
 # ---------------------------------------------------------------------------- window
 
 class Popup:
+    """`service=True` is the real, installed behaviour (tray icon, quit-on-request); tests leave it off."""
     BASE_WIDTH = 680    # design pixels at 100% scaling; multiplied by the screen's DPI scale
     BASE_SIDE = 28
 
-    def __init__(self):
+    def __init__(self, service=False):
+        self.service = service
         try:
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
         except Exception:
@@ -148,6 +189,7 @@ class Popup:
             FONT = "Segoe UI Variable Text"
         has_icons = ICON_FONT in families
         self.busy = False
+        self.unlocking, self.pending, self.pending_text = False, None, ""
         try:
             import icloud
             self.use_icloud = icloud.is_configured()   # cheap: reads a small JSON file only
@@ -202,25 +244,42 @@ class Popup:
             tk.Label(foot, text=key, font=(FONT, 9, "bold"), bg=CARD, fg=FG, padx=self.px(7), pady=self.px(1)).pack(side="right", padx=(self.px(14), 0))
 
         self.entry.bind("<Return>", self.on_enter)
-        self.entry.bind("<Escape>", lambda e: self.hide())
+        self.entry.bind("<Escape>", self.on_escape)
         self.var.trace_add("write", lambda *a: self.refresh())
         r.bind("<FocusOut>", self.on_focus_out)
 
         self.events = queue.Queue()
         threading.Thread(target=listen_for_hotkey, args=(self.events,), daemon=True).start()
+        self.tray = None
+        if service:
+            import tray
+            from quickadd_ctl import autostart_enabled, set_autostart
+            self.stop_event = singleton.create_stop_event()
+            self.tray = tray.start(self.events, "Ctrl+Alt+C", autostart_enabled,
+                                   lambda: set_autostart(not autostart_enabled()))
         r.after(150, self.poll)
 
     def px(self, n):
         return int(round(n * self.k))
 
     def poll(self):
+        if self.service and singleton.stop_requested(self.stop_event):
+            self.quit()
+            return
         try:
             while True:
                 item = self.events.get_nowait()
-                if item == "hotkey":
-                    self.toggle()
+                if item in ("hotkey", "tray-add"):
+                    self.toggle() if item == "hotkey" else self.show()
+                elif item == "tray-quit":
+                    self.quit()
+                    return
+                elif item == "tray-restart":
+                    self.restart()
                 elif item == "hotkey-failed":
                     print("Could not register hotkey (already in use?).")
+                elif isinstance(item, tuple) and item[0] == "unlock":
+                    self.on_unlock_result(item[1])
                 elif isinstance(item, tuple):
                     self.on_saved(*item)
         except queue.Empty:
@@ -235,6 +294,7 @@ class Popup:
 
     def show(self):
         r = self.root
+        self.leave_unlock_mode()
         self.var.set("")
         self.refresh()
         r.update_idletasks()
@@ -249,6 +309,7 @@ class Popup:
         self.entry.focus_set()
 
     def hide(self):
+        self.leave_unlock_mode()
         self.root.withdraw()
 
     def on_focus_out(self, _event):
@@ -271,6 +332,8 @@ class Popup:
         self.note_lbl.config(text=note, fg=note_fg)
 
     def refresh(self):
+        if self.unlocking:
+            return                                    # the entry holds a passphrase now, not an event
         ev = parse(self.var.get())
         if ev is None:
             self.set_card(DIM, "Describe your event", DIM,
@@ -283,15 +346,73 @@ class Popup:
                           date_text(ev), time_text(ev), WARN if ev["all_day"] else ACCENT,
                           "  ·  ".join(parts), ACCENT if ev["rrule"] and not ev["hints"] else WARN)
 
+    # ---- passphrase prompt: the iCloud password is encrypted on disk and unlocked on demand
+
+    def enter_unlock_mode(self, ev, typed):
+        self.unlocking, self.pending, self.pending_text = True, ev, typed
+        self.var.set("")
+        self.entry.config(show="•")
+        self.set_card(WARN, "Unlock Apple Calendar", FG, "Type your passphrase and press Enter", "")
+        self.date_lbl.config(fg=DIM)
+
+    def leave_unlock_mode(self):
+        self.unlocking, self.pending = False, None
+        self.entry.config(show="")
+
+    def cancel_unlock(self):
+        typed = self.pending_text
+        self.leave_unlock_mode()
+        self.var.set(typed)                            # back to the event they were typing
+        self.refresh()
+
+    def check_passphrase(self):
+        passphrase = self.var.get()
+        self.var.set("")
+        self.busy = True
+        self.set_card(ACCENT, "Unlocking…", DIM, "", "")
+
+        def work():
+            import icloud
+            self.events.put(("unlock", icloud.unlock(passphrase)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_unlock_result(self, ok):
+        self.busy = False
+        if not ok:
+            self.set_card(ERR, "Wrong passphrase", ERR, "Try again, or press Esc to go back", "")
+            self.date_lbl.config(fg=DIM)
+            return
+        ev = self.pending
+        self.leave_unlock_mode()
+        self.start_icloud_save(ev)
+
+    def start_icloud_save(self, ev):
+        self.busy = True
+        self.set_card(ACCENT, "Adding to Apple Calendar…", DIM, ev["title"], "")
+        self.date_lbl.config(fg=DIM)
+        threading.Thread(target=save_to_icloud, args=(ev, self.events), daemon=True).start()
+
+    def on_escape(self, _event):
+        if self.unlocking and not self.busy:
+            self.cancel_unlock()
+        else:
+            self.hide()
+
     def on_enter(self, _event):
+        if self.busy:
+            return
+        if self.unlocking:
+            self.check_passphrase()
+            return
         ev = parse(self.var.get())
-        if ev is None or self.busy:
+        if ev is None:
             return
         if self.use_icloud:
-            self.busy = True
-            self.set_card(ACCENT, "Adding to Apple Calendar…", DIM, ev["title"], "")
-            self.date_lbl.config(fg=DIM)
-            threading.Thread(target=save_to_icloud, args=(ev, self.events), daemon=True).start()
+            import icloud
+            if icloud.needs_unlock():
+                self.enter_unlock_mode(ev, self.var.get())
+            else:
+                self.start_icloud_save(ev)
             return
         try:
             path = write_ics(ev)
@@ -308,9 +429,47 @@ class Popup:
         if kind != "error":
             self.root.after(1400 if kind == "fallback" else 1000, self.hide)
 
+    def quit(self):
+        if self.tray is not None:
+            self.tray.stop()
+        self.root.destroy()
+
+    def restart(self):
+        """Hand over to the control command, which stops this process and starts a fresh one (new code)."""
+        ctl = Path(__file__).resolve().with_name("quickadd_ctl.py")
+        subprocess.Popen([sys.executable, str(ctl), "restart"], creationflags=0x08000000 | 0x00000008,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
     def run(self):
         self.root.mainloop()
 
 
+LOG = Path.home() / ".quickadd.log"
+PIDFILE = Path.home() / ".quickadd.pid"
+
+
+def _log_to_file():
+    """Under pythonw there is no console, so errors would vanish: keep them in ~/.quickadd.log."""
+    if ctypes.windll.kernel32.GetConsoleWindow():      # started from a terminal: keep output there
+        return
+    try:
+        if LOG.exists() and LOG.stat().st_size > 1_000_000:
+            LOG.unlink()
+        sys.stdout = sys.stderr = open(LOG, "a", encoding="utf-8", buffering=1)
+        print("---- %s  started, pid %d" % (dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), os.getpid()))
+    except OSError:
+        pass
+
+
+def main():
+    _log_to_file()
+    if not singleton.acquire():
+        print("already running, nothing to do")
+        return
+    PIDFILE.write_text(str(os.getpid()))
+    atexit.register(lambda: PIDFILE.unlink(missing_ok=True))
+    Popup(service=True).run()
+
+
 if __name__ == "__main__":
-    Popup().run()
+    main()

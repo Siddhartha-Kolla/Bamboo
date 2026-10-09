@@ -70,7 +70,7 @@ def _status(_arg):
     import eventout
     zone = eventout.local_zone()
     detail = "Default: %s   ·   Connected: %s\nVault: %s   ·   Timezone: %s   ·   Hotkey: %s" % (
-        calendars.label(target) if target else "a local file", ", ".join(calendars.label(t) for t in ready) or "none",
+        calendars.label(target) if target else "a local file", ", ".join(calendars.footer_label(t) for t in ready) or "none",
         locked, zone[0] if zone else "UTC", cfg["defaults"]["hotkey"])
     return Result("info", "Status", detail)
 
@@ -93,7 +93,7 @@ def _target(arg):
     if arg:
         return Result("error", "Unknown calendar %r" % arg, "Use /target apple or /target google.")
     return Result("info", "Default calendar: %s" % (calendars.label(current) if current else "a local file"),
-                  "Connected: %s   ·   change with /apple or /google" % (", ".join(calendars.label(t) for t in ready) or "none"))
+                  "Connected: %s   ·   change with /apple or /google" % (", ".join(calendars.footer_label(t) for t in ready) or "none"))
 
 
 def _lock(_arg):

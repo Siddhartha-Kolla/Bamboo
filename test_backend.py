@@ -554,6 +554,101 @@ def google_disconnect_while_locked_changes_nothing():
         assert settings.load()["google"]["client_id"] == "cid"
 
 
+import google_link
+
+
+def _link_query(url):
+    parts = urllib.parse.urlparse(url)
+    assert parts.scheme == "https" and parts.netloc == "calendar.google.com" and parts.path == "/calendar/render", url
+    return {k: v[0] for k, v in urllib.parse.parse_qs(parts.query, keep_blank_values=True).items()}
+
+
+@test
+def link_url_timed_event_uses_utc_instants_and_the_display_zone():
+    with isolated():
+        settings.CONFIG.write_text(json.dumps({"defaults": {"timezone": "Europe/Berlin"}}))
+        q = _link_query(google_link.build_url(_timed()))                              # Friday 9:30, summer time
+        assert q == {"action": "TEMPLATE", "text": "Meeting", "dates": "20261009T073000Z/20261009T083000Z", "ctz": "Europe/Berlin"}, q
+        q = _link_query(google_link.build_url(_ev("meeting 6 november 9:30")))        # winter time
+        assert q["dates"] == "20261106T083000Z/20261106T093000Z"
+        settings.CONFIG.write_text(json.dumps({"defaults": {"timezone": "America/New_York"}}))
+        q = _link_query(google_link.build_url(_timed()))
+        assert q["dates"] == "20261009T133000Z/20261009T143000Z" and q["ctz"] == "America/New_York"
+
+
+@test
+def link_url_all_day_multi_day_and_repeat():
+    with isolated():
+        q = _link_query(google_link.build_url(_ev("sprint review friday next week")))
+        assert q["dates"] == "20261016/20261017" and "ctz" not in q                   # exclusive end, no timezone for dates
+        q = _link_query(google_link.build_url(_ev("holiday today until 31st october")))
+        assert q["dates"] == "20261007/20261101"
+        settings.CONFIG.write_text(json.dumps({"defaults": {"timezone": "Europe/Berlin"}}))
+        q = _link_query(google_link.build_url(_ev("yoga every monday 7am")))
+        assert q["recur"] == "RRULE:FREQ=WEEKLY;BYDAY=MO" and q["dates"] == "20261012T050000Z/20261012T060000Z", q
+        q = _link_query(google_link.build_url(_ev("retreat 12 october 10am to 14 october 4pm")))
+        assert q["dates"] == "20261012T080000Z/20261014T140000Z"
+
+
+@test
+def link_url_survives_special_characters_and_long_titles():
+    with isolated():
+        for title in ["Dentist & co #1 100% +x", "Café Müller – Übung", "a=b?c/d"]:
+            ev = _ev("%s friday 3pm" % title)
+            assert _link_query(google_link.build_url(ev))["text"] == ev["title"], title
+        ev = _ev("%s friday 3pm" % ("x" * 500))
+        assert len(_link_query(google_link.build_url(ev))["text"]) == google_link.MAX_TITLE
+
+
+@test
+def link_url_without_a_known_zone_omits_ctz_but_keeps_instants():
+    with isolated():
+        settings.CONFIG.write_text(json.dumps({"defaults": {"timezone": "Not/AZone"}}))
+        q = _link_query(google_link.build_url(_timed()))
+        assert "ctz" not in q and q["dates"].count("Z") == 2 and q["dates"].count("/") == 1
+
+
+@test
+def link_mode_settings_logic():
+    with isolated():
+        cases = [({}, None, False), ({"google": {"mode": "link"}}, "link", True),
+                 ({"google": {"client_id": "x", "calendar_id": "p"}}, "api", True),            # written before modes existed
+                 ({"google": {"client_id": "x"}}, "api", False), ({"google": {"mode": "api"}}, "api", False),
+                 ({"google": {"mode": "link", "client_id": "x"}}, "link", True), ({"google": {"mode": "bogus"}}, None, False)]
+        for raw, mode, configured in cases:
+            settings.CONFIG.write_text(json.dumps(raw))
+            assert settings.google_mode() == mode and settings.google_configured() == configured, (raw, settings.google_mode())
+        settings.CONFIG.write_text(json.dumps({"google": {"mode": "link"}, "default_target": "google"}))
+        assert settings.configured_targets() == ["google"] and settings.default_target() == "google"
+
+
+@test
+def link_mode_routing_needs_no_unlock_and_opens_the_browser():
+    with isolated():
+        settings.CONFIG.write_text(json.dumps({"apple_id": "a", "calendar": "c", "google": {"mode": "link"}}))
+        vault.create("pass-phrase-1", {"apple_password": "x"})
+        vault.lock()
+        assert calendars.is_manual("google") and not calendars.is_manual("apple")
+        assert calendars.needs_unlock("google") is False and calendars.needs_unlock("apple") is True      # Apple still needs the vault
+        assert calendars.footer_label("google") == "Google Calendar (opens in your browser)" and calendars.footer_label("apple") == "Apple Calendar"
+        opened = []
+        saved = google_link._open
+        google_link._open = lambda url: opened.append(url) or True
+        try:
+            assert calendars.add_event("google", _timed(), "ics") == "your browser" and len(opened) == 1
+            assert _link_query(opened[0])["text"] == "Meeting"
+            google_link._open = lambda url: False                                                          # no browser could start
+            raises(RuntimeError, calendars.add_event, "google", _timed(), "ics")
+        finally:
+            google_link._open = saved
+        assert vault.needs_unlock()                                                                         # the vault was never touched
+    with isolated():
+        settings.CONFIG.write_text(json.dumps({"google": {"mode": "api", "client_id": "x", "calendar_id": "p"}}))
+        vault.create("pass-phrase-1", {})
+        vault.lock()
+        assert not calendars.is_manual("google") and calendars.needs_unlock("google") is True               # the API route still unlocks
+
+
 BUNDLED = ("123456789012-abcdefg.apps.googleusercontent.com", "GOCSPX-shipped-secret")
 
 
@@ -610,10 +705,10 @@ def google_save_connection_shipped_vs_own_client():
         vault.create("pass-phrase-1", {})
         google_cal.save_connection(BUNDLED[0], BUNDLED[1], "r1")
         assert vault.names() == [google_cal.SECRET_REFRESH]                          # the shared secret is not copied per user
-        assert settings.load()["google"] == {"client_id": BUNDLED[0], "own_client": False}
+        assert settings.load()["google"] == {"mode": "api", "client_id": BUNDLED[0], "own_client": False}
         google_cal.save_connection("own-id", "own-secret", "r2", own_client=True)
         assert vault.get(google_cal.SECRET_CLIENT) == "own-secret" and vault.get(google_cal.SECRET_REFRESH) == "r2"
-        assert settings.load()["google"] == {"client_id": "own-id", "own_client": True}
+        assert settings.load()["google"] == {"mode": "api", "client_id": "own-id", "own_client": True}
         google_cal.save_connection(BUNDLED[0], BUNDLED[1], "r3")                     # switching back drops the own secret
         assert google_cal.SECRET_CLIENT not in vault.names()
 

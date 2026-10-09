@@ -82,7 +82,10 @@ def save_event(ev, target, out):
     """Worker thread: sends the event to `target`, falls back to a local .ics, reports on `out`."""
     try:
         cal = calendars.add_event(target, ev, build_ics(ev))
-        out.put(("saved", "Added to %s" % calendars.label(target), "%s  ·  %s" % (cal, ev["title"])))
+        if calendars.is_manual(target):               # only opened in the browser: the user still presses Save there
+            out.put(("opened", "Opened in %s" % calendars.label(target), "Press Save in your browser  ·  %s" % ev["title"]))
+        else:
+            out.put(("saved", "Added to %s" % calendars.label(target), "%s  ·  %s" % (cal, ev["title"])))
     except Exception as err:  # noqa: BLE001 - any failure must still end in a saved file
         try:
             path = write_ics(ev)
@@ -302,7 +305,7 @@ class Popup:
 
     def update_footer(self, override=None):
         target = calendars.choose_target(override=override)
-        self.foot_lbl.config(text=calendars.label(target) if target else "Saved to Documents\\quickadd")
+        self.foot_lbl.config(text=calendars.footer_label(target) if target else "Saved to Documents\\quickadd")
 
     def refresh(self):
         if self.unlocking:
@@ -407,7 +410,8 @@ class Popup:
 
     def start_save(self, ev, target):
         self.busy = True
-        self.set_card(ACCENT, "Adding to %s…" % calendars.label(target), DIM, ev["title"], "")
+        self.set_card(ACCENT, ("Opening %s…" if calendars.is_manual(target) else "Adding to %s…") % calendars.label(target),
+                      DIM, ev["title"], "")
         self.date_lbl.config(fg=DIM)
         threading.Thread(target=save_event, args=(ev, target, self.events), daemon=True).start()
 
@@ -447,11 +451,11 @@ class Popup:
 
     def on_saved(self, kind, title, detail):
         self.busy = False
-        color = {"saved": OK, "fallback": WARN, "error": ERR}[kind]
+        color = {"saved": OK, "opened": OK, "fallback": WARN, "error": ERR}[kind]
         self.set_card(color, title, color, detail, "")
         self.date_lbl.config(fg=DIM)
         if kind != "error":
-            self.root.after(1400 if kind == "fallback" else 1000, self.hide)
+            self.root.after(1400 if kind in ("fallback", "opened") else 1000, self.hide)
 
     def quit(self):
         if self.tray is not None:

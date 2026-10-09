@@ -18,6 +18,7 @@ import quickadd
 import settings
 import vault
 
+_REAL_ADD = calendars.add_event                  # earlier flows stub calendars.add_event; the link flow needs the real one
 RESULTS = []
 
 
@@ -323,7 +324,7 @@ def run_settings_flow(tmp):
     w.g_cal_var.set("Team")
     w.google_save_calendar()
     g = settings.load()["google"]
-    check("saving the calendar makes Google usable", g == {"client_id": "cid.apps.googleusercontent.com", "own_client": True, "calendar_id": "team@group", "calendar_name": "Team"}
+    check("saving the calendar makes Google usable", g == {"mode": "api", "client_id": "cid.apps.googleusercontent.com", "own_client": True, "calendar_id": "team@group", "calendar_name": "Team"}
           and settings.google_configured() and "Connected: Team" in w.google_state.cget("text"), g)
 
     # --- Defaults
@@ -406,31 +407,34 @@ def run_shipped_client_flow(tmp):
     p = make_popup(tmp)
     w = sw.open_window(p)
     pump(p, 0.4)
-    check("with a shipped client the client ID/secret fields are hidden", not w.g_adv.winfo_ismapped() and not w.g_adv.winfo_viewable(),
-          (w.g_adv.winfo_ismapped(), ))
+    check("the advanced section starts closed", not w.g_adv.winfo_ismapped())
+    w.toggle_advanced()
+    pump(p, 0.3)
+    check("with a shipped client the client ID/secret fields are hidden", w.g_adv.winfo_ismapped() and not w.g_fields.winfo_ismapped(),
+          (w.g_adv.winfo_ismapped(), w.g_fields.winfo_ismapped()))
     check("the advanced switch is offered", "own Google project" in w.g_own_btn.cget("text"), w.g_own_btn.cget("text"))
-    check("the status invites a single click", "Sign in with Google" in w.google_state.cget("text"), w.google_state.cget("text"))
+    check("the status invites a single click", "Use Google Calendar" in w.google_state.cget("text"), w.google_state.cget("text"))
 
     w.google_sign_in()                                           # nothing typed anywhere
     pump(p, 0.8)
     check("sign-in needs no typing and uses the shipped client", seen == [("123456789012-abcdefg.apps.googleusercontent.com", "GOCSPX-shipped")], seen)
     check("only the refresh token is stored; the shared secret is not copied", vault.names() == ["google_refresh_token"], vault.names())
     check("settings remember the shared client, not an own project",
-          settings.load()["google"] == {"client_id": "123456789012-abcdefg.apps.googleusercontent.com", "own_client": False}, settings.load()["google"])
+          settings.load()["google"] == {"mode": "api", "client_id": "123456789012-abcdefg.apps.googleusercontent.com", "own_client": False}, settings.load()["google"])
     check("the calendar list appears with the primary selected", w.g_cal_var.get() == "me@gmail.com", w.g_cal_var.get())
     w.google_save_calendar()
     check("saving the calendar makes Google usable", settings.google_configured() and "Connected: me@gmail.com" in w.google_state.cget("text"))
 
     w.toggle_own()
     pump(p, 0.2)
-    check("the advanced switch reveals the fields for an own project", w.g_adv.winfo_ismapped() and "built-in" in w.g_own_btn.cget("text"), w.g_own_btn.cget("text"))
+    check("the advanced switch reveals the fields for an own project", w.g_fields.winfo_ismapped() and "built-in" in w.g_own_btn.cget("text"), w.g_own_btn.cget("text"))
     w.g_id_var.set("")
     w.g_secret_var.set("")
     w.google_sign_in()
     check("in own-project mode the fields are required", "client ID" in w.google_msg.cget("text"), w.google_msg.cget("text"))
     w.toggle_own()
     pump(p, 0.2)
-    check("switching back hides them again", not w.g_adv.winfo_ismapped())
+    check("switching back hides them again", not w.g_fields.winfo_ismapped())
 
     w.close()
     sw._open["win"] = None
@@ -438,7 +442,83 @@ def run_shipped_client_flow(tmp):
     w = sw.open_window(p)
     pump(p, 0.4)
     check("with no shipped client the own-project fields are shown and explained",
-          w.g_adv.winfo_ismapped() and "no built-in" in w.g_own_btn.cget("text"), w.g_own_btn.cget("text"))
+          w.g_fields.winfo_ismapped() and "no built-in" in w.g_own_btn.cget("text"), w.g_own_btn.cget("text"))
+    w.close()
+    p.root.destroy()
+
+
+def run_google_link_flow(tmp):
+    """Google without any sign-in: Enter opens the prefilled form in the browser."""
+    import urllib.parse
+
+    import google_link
+    import settings_window as sw
+
+    reset(tmp)
+    settings.CONFIG.write_text(json.dumps({"google": {"mode": "link"}, "default_target": "google", "defaults": {"timezone": "Europe/Berlin"}}))
+    calendars.add_event = _REAL_ADD
+    opened = []
+    google_link._open = lambda url: opened.append(url) or True
+    p = make_popup(tmp)
+    vault.create("my pass phrase", {"apple_password": "dummy"})
+    vault.lock()                                                    # a locked vault must not matter for the browser link
+    p.show()
+    pump(p, 0.2)
+    check("the footer says events open in the browser", p.foot_lbl.cget("text") == "Google Calendar (opens in your browser)", p.foot_lbl.cget("text"))
+
+    type_and_enter(p, "dentist friday 3pm")
+    pump(p, 0.8)
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(opened[0]).query) if opened else {}
+    check("Enter opens the prefilled form with the title, UTC times and the timezone",
+          len(opened) == 1 and query.get("text") == ["Dentist"] and query.get("ctz") == ["Europe/Berlin"] and query["dates"][0].endswith("Z"), opened)
+    check("no passphrase is asked for", not p.unlocking and vault.needs_unlock())
+    check("the card is honest: opened, not added", card(p)[0] == "Opened in Google Calendar" and "Save" in card(p)[1], card(p))
+    pump(p, 2.0)
+    check("the popup hides afterwards", p.root.state() == "withdrawn")
+
+    google_link._open = lambda url: False                           # no browser available
+    p.show()
+    type_and_enter(p, "lunch tomorrow noon")
+    pump(p, 0.8)
+    files = list((tmp / "out").glob("*.ics"))
+    check("without a browser the event is saved as a file instead", len(files) == 1 and "saved a file instead" in card(p)[0], (files, card(p)))
+    pump(p, 2.0)
+
+    # one-off override while the default is another calendar
+    settings.CONFIG.write_text(json.dumps({"apple_id": "me@icloud.com", "calendar": "School", "google": {"mode": "link"},
+                                           "default_target": "apple", "defaults": {"timezone": "Europe/Berlin"}}))
+    google_link._open = lambda url: opened.append(url) or True
+    opened.clear()
+    p.show()
+    p.var.set("review tomorrow 5pm /google")
+    pump(p, 0.2)
+    check("the override note names the browser route", "Google Calendar (this event only)" in p.note_lbl.cget("text") and
+          p.foot_lbl.cget("text") == "Google Calendar (opens in your browser)", (p.note_lbl.cget("text"), p.foot_lbl.cget("text")))
+    p.on_enter(None)
+    pump(p, 0.8)
+    check("a one-off /google goes to the browser while Apple stays the default",
+          len(opened) == 1 and not p.unlocking and settings.default_target() == "apple", (opened, p.unlocking))
+    pump(p, 2.0)
+
+    # settings window: enable and disconnect without any passphrase
+    settings.CONFIG.write_text("{}")
+    sw.ask_passphrase = lambda *a, **k: (_ for _ in ()).throw(AssertionError("the browser link must never ask for a passphrase"))
+    w = sw.open_window(p)
+    pump(p, 0.3)
+    check("before enabling, Google shows as not connected", "Not connected" in w.google_state.cget("text") and not settings.google_configured())
+    check("the advanced section is collapsed", not w.g_adv.winfo_ismapped())
+    w.google_use_link()
+    check("'Use Google Calendar' enables the browser link",
+          settings.google_mode() == "link" and settings.google_configured() and "browser" in w.google_state.cget("text"), settings.load()["google"])
+    check("and Google becomes a default-calendar choice", list(w.target_box.cget("values")) == ["Google Calendar"], w.target_box.cget("values"))
+    w.g_off_btn.invoke()
+    w.g_off_btn.invoke()
+    pump(p, 0.3)
+    check("Disconnect clears it with no passphrase", not settings.google_configured() and settings.load()["google"] == {}
+          and "Not connected" in w.google_state.cget("text"), settings.load()["google"])
+    w.toggle_advanced()
+    pump(p, 0.3)
+    check("the advanced switch opens the own-project section", w.g_adv.winfo_ismapped() and w.g_signin_btn.winfo_ismapped())
     w.close()
     p.root.destroy()
 
@@ -447,7 +527,8 @@ def main():
     only = sys.argv[1:] or None
     flows = [("unlock flow", run_unlock_flow), ("no-calendar flow", run_no_calendar_flow),
              ("commands flow", run_commands_flow), ("override flow", run_override_not_configured_flow),
-             ("settings flow", run_settings_flow), ("shipped client flow", run_shipped_client_flow)]
+             ("settings flow", run_settings_flow), ("shipped client flow", run_shipped_client_flow),
+             ("google link flow", run_google_link_flow)]
     real_add = calendars.add_event
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)

@@ -191,7 +191,7 @@ def save_connection(client_id, client_secret, refresh_token, access_token=None, 
         vault.put(SECRET_CLIENT, client_secret)
     else:
         vault.delete(SECRET_CLIENT)
-    settings.update({"google": {"client_id": client_id, "own_client": bool(own_client)}})
+    settings.update({"google": {"mode": "api", "client_id": client_id, "own_client": bool(own_client)}})
     if access_token:
         _token.update(value=access_token, expires=time.monotonic() + max(int(expires_in) - 60, 0))
 

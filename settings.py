@@ -4,7 +4,7 @@ The file keeps the keys older versions wrote (`apple_id`, `calendar`) at the top
 migrating:
 
     {"apple_id": "...", "calendar": "...",                     # Apple Calendar
-     "google": {"client_id": "...", "calendar_id": "...", "calendar_name": "..."},
+     "google": {"mode": "link"}  or  {"mode": "api", "client_id": "...", "calendar_id": "...", "calendar_name": "..."},
      "default_target": "apple" | "google" | null,
      "defaults": {"duration_min": 60, "unlock_idle_min": 30, "timezone": "auto", "hotkey": "ctrl+alt+C"}}
 """
@@ -89,10 +89,22 @@ def apple_configured(cfg=None):
     return bool(cfg.get("apple_id") and cfg.get("calendar"))
 
 
+def google_mode(cfg=None):
+    """"link" (prefilled browser link, no sign-in), "api" (signed in with an own Google project) or None.
+    A google section written before modes existed (client_id but no mode) is "api"."""
+    g = (cfg or load()).get("google") or {}
+    if g.get("mode") in ("link", "api"):
+        return g["mode"]
+    return "api" if g.get("client_id") else None
+
+
 def google_configured(cfg=None):
     cfg = cfg or load()
     g = cfg.get("google") or {}
-    return bool(g.get("client_id") and g.get("calendar_id"))
+    mode = google_mode(cfg)
+    if mode == "link":
+        return True
+    return bool(mode == "api" and g.get("client_id") and g.get("calendar_id"))
 
 
 def configured_targets(cfg=None):

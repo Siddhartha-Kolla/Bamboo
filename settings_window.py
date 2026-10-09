@@ -289,27 +289,53 @@ class SettingsWindow:
 
         self._heading(page, 7, "Google Calendar")
         self.google_state = self._status(page, 8)
+        tk.Label(page, text="Events open in your browser and you press Save there. No sign-in, and nothing is stored.",
+                 bg=CARD, fg=DIM, font=(theme.FONT, 10), justify="left", anchor="w", wraplength=self.px(560)).grid(
+            row=9, column=0, columnspan=3, sticky="w")
+        self.g_use_btn = self._button(page, "Use Google Calendar", self.google_use_link, primary=True)
+        self.g_off_btn = self._button(page, "Disconnect", lambda: self.confirm_twice(
+            "google", self.g_off_btn, "Disconnect", self.google_disconnect))
+        self._row(page, 10, self.g_use_btn, self.g_off_btn)
+        self.google_msg = self._status(page, 11)
+
+        # Advanced: automatic adding through the user's own Google project (a real sign-in)
         self.g_id_var, self.g_secret_var, self.g_cal_var = tk.StringVar(), tk.StringVar(), tk.StringVar()
         self.g_own_var = tk.BooleanVar()                          # True: sign in with the user's own Google project
         self.g_own_touched = False
-        self.g_cal = self._combo(page, 9, "Calendar", self.g_cal_var)
-        self.g_signin_btn = self._button(page, "Sign in with Google", self.google_sign_in, primary=True)
-        self.g_save_btn = self._button(page, "Save calendar", self.google_save_calendar)
-        self.g_off_btn = self._button(page, "Disconnect", lambda: self.confirm_twice(
-            "google", self.g_off_btn, "Disconnect", self.google_disconnect))
-        self._row(page, 10, self.g_signin_btn, self.g_save_btn, self.g_off_btn)
-        self.google_msg = self._status(page, 11)
-        # "Advanced": your own Google project instead of the one built into the app
-        self.g_own_btn = tk.Button(page, text="", command=self.toggle_own, bg=CARD, fg=DIM, activebackground=CARD, activeforeground=FG,
-                                   relief="flat", bd=0, font=(theme.FONT, 10), cursor="hand2", anchor="w")
-        self.g_own_btn.grid(row=12, column=0, columnspan=3, sticky="w", pady=(self.px(10), 0))
+        self.g_adv_open, self.g_adv_touched = False, False
+        self.g_adv_btn = tk.Button(page, text="", command=self.toggle_advanced, bg=CARD, fg=DIM, activebackground=CARD,
+                                   activeforeground=FG, relief="flat", bd=0, font=(theme.FONT, 10), cursor="hand2", anchor="w")
+        self.g_adv_btn.grid(row=12, column=0, columnspan=3, sticky="w", pady=(self.px(10), 0))
         self.g_adv = tk.Frame(page, bg=CARD)
         self.g_adv.grid(row=13, column=0, columnspan=3, sticky="ew")
         self.g_adv.columnconfigure(1, weight=1)
-        self._field(self.g_adv, 0, "Client ID", self.g_id_var)
-        self._field(self.g_adv, 1, "Client secret", self.g_secret_var, show="•")
-        self.g_guide_btn = self._button(self.g_adv, "Setup guide", self.show_guide)
+        self.g_cal = self._combo(self.g_adv, 0, "Calendar", self.g_cal_var)
+        self.g_signin_btn = self._button(self.g_adv, "Sign in with Google", self.google_sign_in)
+        self.g_save_btn = self._button(self.g_adv, "Save calendar", self.google_save_calendar)
+        self._row(self.g_adv, 1, self.g_signin_btn, self.g_save_btn)
+        self.g_own_btn = tk.Button(self.g_adv, text="", command=self.toggle_own, bg=CARD, fg=DIM, activebackground=CARD, activeforeground=FG,
+                                   relief="flat", bd=0, font=(theme.FONT, 10), cursor="hand2", anchor="w")
+        self.g_own_btn.grid(row=2, column=0, columnspan=3, sticky="w", pady=(self.px(8), 0))
+        self.g_fields = tk.Frame(self.g_adv, bg=CARD)
+        self.g_fields.grid(row=3, column=0, columnspan=3, sticky="ew")
+        self.g_fields.columnconfigure(1, weight=1)
+        self._field(self.g_fields, 0, "Client ID", self.g_id_var)
+        self._field(self.g_fields, 1, "Client secret", self.g_secret_var, show="\u2022")
+        self.g_guide_btn = self._button(self.g_fields, "Setup guide", self.show_guide)
         self.g_guide_btn.grid(row=2, column=0, columnspan=2, sticky="w", pady=(self.px(8), 0))
+
+    def toggle_advanced(self):
+        self.g_adv_touched = True
+        self.g_adv_open = not self.g_adv_open
+        self._apply_advanced()
+
+    def _apply_advanced(self):
+        if self.g_adv_open:
+            self.g_adv.grid()
+        else:
+            self.g_adv.grid_remove()
+        self.g_adv_btn.config(text="\u25be  Advanced: add events automatically (needs your own Google project)" if self.g_adv_open
+                              else "\u25b8  Advanced: add events automatically (needs your own Google project)")
 
     def toggle_own(self):
         self.g_own_touched = True
@@ -322,13 +348,18 @@ class SettingsWindow:
         has_builtin = google_cal.bundled_client() is not None
         own = self.g_own_var.get() or not has_builtin
         if own:
-            self.g_adv.grid()
+            self.g_fields.grid()
         else:
-            self.g_adv.grid_remove()
+            self.g_fields.grid_remove()
         if has_builtin:
-            self.g_own_btn.config(text="▾  Use the built-in sign-in instead" if own else "▸  Advanced: use my own Google project")
+            self.g_own_btn.config(text="\u25be  Use the built-in sign-in instead" if own else "\u25b8  Use my own Google project")
         else:
             self.g_own_btn.config(text="This copy has no built-in Google sign-in, so use your own Google project (see Setup guide).")
+
+    def google_use_link(self):
+        settings.update({"google": {"mode": "link"}})
+        self.say(self.google_msg, "Google Calendar is ready. New events open in your browser; press Save there.", "ok")
+        self.reload()
 
     def apple_connect(self):
         apple_id, password = self.apple_id_var.get().strip(), self.apple_pw_var.get().strip()
@@ -467,6 +498,15 @@ class SettingsWindow:
 
     def google_disconnect(self):
         import google_cal
+        if not settings.load()["google"].get("client_id"):                # browser-link mode only: nothing stored, nothing to revoke
+            cfg = settings.load()
+            cfg["google"] = {}
+            if cfg.get("default_target") == "google":
+                cfg["default_target"] = None
+            settings.save(cfg)
+            self.say(self.google_msg, "Google Calendar disconnected.", "ok")
+            self.reload()
+            return
         if not self.ensure_unlocked(self.google_msg):
             return
         self.say(self.google_msg, "Disconnecting…")
@@ -606,19 +646,25 @@ class SettingsWindow:
             self.apple_cal_var.set("")
         # Google
         g = cfg["google"]
-        if settings.google_configured(cfg):
-            self.say(self.google_state, "Connected: %s" % (g.get("calendar_name") or g["calendar_id"]), "ok")
+        mode = settings.google_mode(cfg)
+        if mode == "link":
+            self.say(self.google_state, "Connected: new events open in your browser (no sign-in).", "ok")
+        elif settings.google_configured(cfg):
+            self.say(self.google_state, "Connected: %s (automatic)" % (g.get("calendar_name") or g["calendar_id"]), "ok")
             self.g_cal.config(values=[g.get("calendar_name") or g["calendar_id"]])
             self.g_cal_var.set(g.get("calendar_name") or g["calendar_id"])
         elif g.get("client_id"):
             self.say(self.google_state, "Signed in, but no calendar chosen yet.", "warn")
         else:
-            self.say(self.google_state, "Not connected. Press “Sign in with Google”.", "info")
+            self.say(self.google_state, "Not connected. Press \u201cUse Google Calendar\u201d.", "info")
         if g.get("own_client") and g.get("client_id"):
             self.g_id_var.set(g["client_id"])
         if not self.g_own_touched:
             self.g_own_var.set(bool(g.get("own_client")))
+        if not self.g_adv_touched:
+            self.g_adv_open = mode == "api" or bool(g.get("client_id"))
         self._apply_own_mode()
+        self._apply_advanced()
         # Defaults
         ready = [settings.LABELS[t] for t in settings.configured_targets(cfg)]
         self.target_box.config(values=ready, state="readonly" if ready else "disabled")
